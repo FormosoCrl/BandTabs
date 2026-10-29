@@ -1,6 +1,8 @@
+/** Formatos que se guardan tal cual. MIDI y tabs en texto se convierten a alphaTex al importar. */
 export type SongFormat = 'guitarpro' | 'musicxml' | 'alphatex';
+export type ImportFormat = SongFormat | 'midi' | 'asciitab';
 
-const EXTENSIONS: Record<string, SongFormat> = {
+const EXTENSIONS: Record<string, ImportFormat> = {
   gp: 'guitarpro',
   gp3: 'guitarpro',
   gp4: 'guitarpro',
@@ -12,6 +14,10 @@ const EXTENSIONS: Record<string, SongFormat> = {
   atex: 'alphatex',
   alphatex: 'alphatex',
   tex: 'alphatex',
+  mid: 'midi',
+  midi: 'midi',
+  txt: 'asciitab',
+  tab: 'asciitab',
 };
 
 /** Valor para el atributo `accept` del selector de archivos. */
@@ -19,7 +25,7 @@ export const ACCEPTED_EXTENSIONS = Object.keys(EXTENSIONS)
   .map((ext) => `.${ext}`)
   .join(',');
 
-export function detectFormat(fileName: string): SongFormat | null {
+export function detectFormat(fileName: string): ImportFormat | null {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   return EXTENSIONS[ext] ?? null;
 }

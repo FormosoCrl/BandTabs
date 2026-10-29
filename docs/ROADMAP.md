@@ -1,6 +1,6 @@
 # BandTabs: roadmap
 
-> Estado: **aprobado**. Fases 0 y 1 implementadas (octubre de 2026).
+> Estado: **aprobado**. Fases 0, 1 y 2 implementadas (octubre de 2026).
 > Alcance actual: **solo app de PC**. Móvil y otras plataformas, más adelante.
 
 BandTabs es una alternativa open source a Songsterr. El objetivo es cubrir tres cosas:
@@ -99,14 +99,14 @@ Basado en el [informe de funciones de Songsterr](https://claude.ai/artifact/Nupj
 | Función | Cómo la cubrimos | Fase |
 |---|---|---|
 | Ver tabs completos | alphaTab | 1 ✅ |
-| Búsqueda y filtros (instrumento y afinación ✅; dificultad en fase 2) | Biblioteca local | 1 ✅ |
+| Búsqueda y filtros (instrumento y afinación ✅; dificultad más adelante) | Biblioteca local | 1 ✅ |
 | Favoritos, historial, listas | IndexedDB | 1 ✅ |
 | Reproducción sincronizada con cursor | alphaTab | 1 ✅ |
 | Varias pistas y mezclador | alphaTab | 1 ✅ |
-| Metrónomo y transposición | alphaTab | 2 |
-| Vista tab, acordes (con cejilla) y letra | alphaTab + vista propia | 2 |
+| Metrónomo y transposición | alphaTab (transposición del sonido; la visual, más adelante) | 2 ✅ |
+| Vista tab, acordes (con cejilla) y letra | alphaTab + vista propia | 2 ✅ |
 | Partitura estándar (en todas las plataformas, no solo web) | alphaTab | 1 ✅ |
-| Afinador cromático | Micrófono + librería `pitchy` | 2 |
+| Afinador cromático | Micrófono + librería `pitchy` | 2 ✅ |
 | Editor de tabs | Editor propio sobre alphaTab | 5 |
 | Historial de revisiones | Versionado local de cada archivo | 5 |
 
@@ -114,15 +114,15 @@ Basado en el [informe de funciones de Songsterr](https://claude.ai/artifact/Nupj
 
 | Función | Cómo la cubrimos | Fase |
 |---|---|---|
-| Cambio de velocidad sin cambiar el tono | alphaTab (sintetizador); `rubberband-wasm` o SoundTouch para audio real | 2 / 3 |
-| Loop de compases | alphaTab (selección de rango) | 2 |
+| Cambio de velocidad sin cambiar el tono | alphaTab (sintetizador); `rubberband-wasm` o SoundTouch para audio real | 2 ✅ / 3 |
+| Loop de compases | alphaTab (selección de rango) | 2 ✅ |
 | Solo y mute de pistas | alphaTab | 1 ✅ |
-| Pitch shift del sintetizador | Transposición de reproducción en alphaTab | 2 |
-| Cuenta atrás (count-in) | alphaTab | 2 |
+| Pitch shift del sintetizador | Transposición de reproducción en alphaTab | 2 ✅ |
+| Cuenta atrás (count-in) | alphaTab | 2 ✅ |
 | Sin anuncios | No habrá anuncios | — |
-| Imprimir (completo, por página, alto contraste) | Impresión de alphaTab + tema de alto contraste | 2 |
-| Descargar Guitar Pro y MIDI | Exportadores de alphaTab | 2 |
-| Descargar MP3 / WAV | Renderizar el sintetizador a audio (WebAudio offline) | 2 |
+| Imprimir (completo; alto contraste más adelante) | Impresión de la ventana con estilo propio | 2 ✅ |
+| Descargar Guitar Pro y MIDI | Exportadores de alphaTab | 2 ✅ |
+| Descargar MP3 / WAV | Renderizar el sintetizador a audio | WAV 2 ✅, MP3 más adelante |
 | Audio original sincronizado sin cortes | Cargar el audio del usuario y alinearlo con la tab (marcas de sincronía, alineación automática con beat tracking) | 3 |
 | Backing track (canción sin tu instrumento) | Separación de pistas: quitar la tuya del audio original | 4 |
 | Transcripción IA completa | Pipeline de la sección 3, sin límite mensual | 4 |
@@ -185,12 +185,15 @@ Cada fase termina con algo usable.
 - App de escritorio sin conexión.
 - **Resultado:** ya sustituye a Songsterr para tus propios archivos.
 
-### Fase 2: Práctica y exportación (paridad Plus)
-- Velocidad, loop, count-in, metrónomo, transposición y pitch shift.
-- Vistas de acordes y letra.
+### Fase 2: Práctica y exportación (paridad Plus) ✅
+- Velocidad, repetir selección, count-in, metrónomo y cambio de tono.
+- Vista de acordes y letra.
 - Afinador.
-- Imprimir y exportar a GP, MIDI, MP3 y WAV.
-- Importadores de MIDI, ASCII y ChordPro.
+- Imprimir y exportar a GP, MIDI y WAV.
+- Importadores de MIDI y tabs en texto (ASCII).
+- Instalador de Windows publicado automáticamente en GitHub Releases.
+- Pendiente para más adelante: exportar MP3, importar ChordPro, filtro por dificultad (los
+  archivos no traen ese dato) y transponer también lo que se ve, no solo lo que suena.
 - **Resultado:** todo lo de Songsterr Plus salvo audio real e IA.
 
 ### Fase 3: Audio real sincronizado
@@ -234,4 +237,4 @@ Cada fase termina con algo usable.
 
 ## 8. Siguiente paso
 
-Fase 2: herramientas de práctica (velocidad, loop, count-in, metrónomo), impresión y exportación.
+Fase 3: cargar el audio original de la canción y sincronizarlo con la tablatura.

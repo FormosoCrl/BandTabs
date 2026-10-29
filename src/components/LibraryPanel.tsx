@@ -207,7 +207,7 @@ function emptyMessage(section: Section, playlistId: number | null): string {
   if (section === 'playlist') {
     return playlistId == null ? 'Crea o elige una lista.' : 'Esta lista está vacía.';
   }
-  return 'No hay canciones. Importa archivos Guitar Pro, MusicXML o alphaTex.';
+  return 'No hay canciones. Importa archivos Guitar Pro, MusicXML, MIDI o tabs en texto.';
 }
 
 interface SongItemProps {

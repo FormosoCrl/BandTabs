@@ -1,5 +1,7 @@
 import { importer, Settings, model } from '@coderline/alphatab';
 import { detectFormat, type SongFormat } from './formats';
+import { asciiTabToAlphaTex } from './importers/ascii';
+import { midiToAlphaTex } from './importers/midi';
 import { classifyTrack, describeTuning, type InstrumentKind } from './instruments';
 
 export interface TrackSummary {
@@ -36,10 +38,29 @@ function stripExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
 }
 
-/** Lee un archivo de tablatura y extrae los metadatos que guarda la biblioteca. */
-export function parseSong(fileName: string, data: Uint8Array): ParsedSong {
+export interface PreparedFile {
+  format: SongFormat;
+  data: Uint8Array;
+}
+
+/** Deja el archivo en un formato que alphaTab abre directamente (MIDI y texto pasan a alphaTex). */
+export function prepareFile(fileName: string, data: Uint8Array): PreparedFile {
   const format = detectFormat(fileName);
   if (!format) throw new UnsupportedFormatError(fileName);
+  const encode = (tex: string) => new TextEncoder().encode(tex);
+  if (format === 'midi') {
+    return { format: 'alphatex', data: encode(midiToAlphaTex(data, stripExtension(fileName))) };
+  }
+  if (format === 'asciitab') {
+    const text = new TextDecoder().decode(data);
+    return { format: 'alphatex', data: encode(asciiTabToAlphaTex(text, stripExtension(fileName))) };
+  }
+  return { format, data };
+}
+
+/** Lee un archivo ya preparado y extrae los metadatos que guarda la biblioteca. */
+export function parseSong(fileName: string, file: PreparedFile): ParsedSong {
+  const { format, data } = file;
   const score = loadScore(data, format);
   return {
     title: score.title.trim() || stripExtension(fileName),

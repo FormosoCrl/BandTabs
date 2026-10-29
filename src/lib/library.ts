@@ -1,5 +1,5 @@
 import type { BandTabsDb, Playlist, Song } from './db';
-import { parseSong } from './importer';
+import { parseSong, prepareFile } from './importer';
 import type { InstrumentKind } from './instruments';
 
 export interface ImportResult {
@@ -21,7 +21,8 @@ export class Library {
   constructor(private readonly db: BandTabsDb) {}
 
   async importFile(fileName: string, data: Uint8Array): Promise<Song> {
-    const parsed = parseSong(fileName, data);
+    const prepared = prepareFile(fileName, data);
+    const parsed = parseSong(fileName, prepared);
     const song: Omit<Song, 'id'> = {
       ...parsed,
       fileName,
@@ -33,7 +34,7 @@ export class Library {
     };
     return this.db.transaction('rw', this.db.songs, this.db.files, async () => {
       const id = await this.db.songs.add(song as Song);
-      await this.db.files.add({ songId: id, data });
+      await this.db.files.add({ songId: id, data: prepared.data });
       return { ...song, id };
     });
   }

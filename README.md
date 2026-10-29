@@ -8,15 +8,21 @@ sin muros de pago. Tus archivos se guardan solo en tu equipo.
 ## Qué hace ya
 
 - **Importa** archivos Guitar Pro (`.gp`, `.gp3`, `.gp4`, `.gp5`, `.gpx`), MusicXML (`.xml`,
-  `.musicxml`, `.mxl`) y alphaTex (`.atex`), con el botón o arrastrándolos a la ventana.
-- **Muestra** tablatura, partitura o ambas, con zoom.
-- **Reproduce** la canción con un cursor que sigue la partitura. Barra espaciadora para
-  reproducir o pausar.
+  `.musicxml`, `.mxl`), MIDI (`.mid`), tabs en texto copiadas de webs (`.txt`, `.tab`) y alphaTex
+  (`.atex`), con el botón o arrastrándolos a la ventana. En MIDI y texto calcula cuerda y traste,
+  y en las tabs de texto estima el ritmo, que esas tabs no indican.
+- **Muestra** tablatura, partitura, ambas, o acordes con la letra, con zoom.
+- **Reproduce** la canción con un cursor que sigue la partitura (barra espaciadora).
+- **Práctica**: velocidad del 25 al 150 % sin cambiar el tono, repetir unos compases (arrastra
+  sobre la partitura y pulsa Repetir o la tecla L), cuenta atrás, metrónomo y tono de −12 a +12
+  semitonos.
 - **Mezclador** por pista: volumen, silenciar (M) y solo (S). Puedes ver una pista o todas.
+- **Exporta** a Guitar Pro, MIDI y WAV, e **imprime** la partitura.
+- **Afinador** con el micrófono para guitarra, bajo y ukelele.
 - **Biblioteca** local con búsqueda (sin importar tildes), filtros por instrumento y afinación,
   favoritas, recientes y listas.
 
-Lo siguiente (velocidad, loop, metrónomo, imprimir, exportar, transcripción con IA…) está en el
+Lo siguiente (audio original sincronizado, transcripción con IA, editor…) está en el
 [roadmap](docs/ROADMAP.md).
 
 ## Instalar BandTabs

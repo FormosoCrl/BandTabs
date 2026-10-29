@@ -129,8 +129,8 @@ export function App() {
           <div className="welcome">
             <h1>Tus tablaturas, sin muros de pago</h1>
             <p>
-              Importa archivos Guitar Pro (.gp, .gp3, .gp4, .gp5, .gpx), MusicXML o alphaTex. Se
-              guardan solo en este equipo.
+              Importa archivos Guitar Pro (.gp, .gp3, .gp4, .gp5, .gpx), MusicXML, MIDI o tabs en
+              texto (.txt). Se guardan solo en este equipo.
             </p>
             <div className="welcome-actions">
               <button className="btn primary" onClick={() => fileInputRef.current?.click()}>
