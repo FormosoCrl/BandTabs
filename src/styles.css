@@ -798,3 +798,84 @@ input {
     color: #000;
   }
 }
+
+/* Sacar tablatura de un enlace */
+.transcribe {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.source-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -6px;
+  font-size: 0.9em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.note,
+.legal {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9em;
+  line-height: 1.45;
+}
+
+.legal {
+  border-left: 3px solid var(--line);
+  padding-left: 10px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.transcribe-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.transcribe-progress .step {
+  margin: 0;
+  font-weight: 600;
+}
+
+.transcribe-progress .meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.bar div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 300ms linear;
+}

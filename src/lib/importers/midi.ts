@@ -1,5 +1,6 @@
 import { Midi } from '@tonejs/midi';
-import { pitchName, quote, splitDuration, tuningToTex } from './alphatex';
+import { pitchName, quote, tuningToTex } from './alphatex';
+import { buildBars, type GridEvent } from './grid';
 import { assignFrets, STANDARD_BASS, STANDARD_GUITAR } from './frets';
 
 type TrackKind = 'guitar' | 'bass' | 'drums' | 'other';
@@ -13,6 +14,7 @@ function kindOf(program: number, percussion: boolean): TrackKind {
 
 interface Onset {
   step: number;
+  end: number;
   pitches: number[];
 }
 
@@ -58,8 +60,9 @@ export function midiToAlphaTex(data: Uint8Array, fallbackTitle: string): string 
     const onsets = new Map<number, Onset>();
     for (const note of track.notes) {
       const step = Math.round(note.ticks / stepTicks);
-      const onset = onsets.get(step) ?? { step, pitches: [] };
+      const onset = onsets.get(step) ?? { step, end: step + 1, pitches: [] };
       onset.pitches.push(note.midi);
+      onset.end = Math.max(onset.end, Math.round((note.ticks + note.durationTicks) / stepTicks));
       onsets.set(step, onset);
     }
     const ordered = [...onsets.values()].sort((a, b) => a.step - b.step);
@@ -80,29 +83,13 @@ export function midiToAlphaTex(data: Uint8Array, fallbackTitle: string): string 
       return parts.length === 1 ? parts[0] : `(${parts.join(' ')})`;
     };
 
-    const bars: string[] = [];
-    let cursor = 0;
-    for (let bar = 0; bar < barCount; bar++) {
-      const barStart = bar * barSteps;
-      const barEnd = barStart + barSteps;
-      const beats: string[] = [];
-      const rest = (steps: number) => splitDuration(steps).forEach((d) => beats.push(`r.${d}`));
-      let pos = barStart;
-      while (cursor < ordered.length && ordered[cursor].step < barEnd) {
-        const onset = ordered[cursor];
-        if (onset.step > pos) rest(onset.step - pos);
-        const next = ordered[cursor + 1]?.step ?? barEnd;
-        const length = Math.max(1, Math.min(next, barEnd) - onset.step);
-        const [first, ...remaining] = splitDuration(length);
-        const text = noteText(onset, cursor);
-        beats.push(text ? `${text}.${first}` : `r.${first}`);
-        remaining.forEach((d) => beats.push(`r.${d}`));
-        pos = onset.step + length;
-        cursor++;
-      }
-      if (pos < barEnd) rest(barEnd - pos);
-      bars.push((bar === 0 && (num !== 4 || den !== 4) ? `\\ts ${num} ${den} ` : '') + beats.join(' '));
-    }
+    const events: GridEvent[] = ordered.map((onset, i) => ({
+      step: onset.step,
+      end: onset.end,
+      body: noteText(onset, i),
+    }));
+    const bars = buildBars(events, barCount, barSteps);
+    if (num !== 4 || den !== 4) bars[0] = `\\ts ${num} ${den} ${bars[0]}`;
     out.push(bars.join(' |\n') + ' |');
   });
   return out.join('\n');

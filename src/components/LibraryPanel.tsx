@@ -12,6 +12,7 @@ interface Props {
   onOpen: (id: number) => void;
   onImportClick: () => void;
   onTunerClick: () => void;
+  onTranscribeClick: () => void;
   onRemoved: (id: number) => void;
 }
 
@@ -21,6 +22,7 @@ export function LibraryPanel({
   onOpen,
   onImportClick,
   onTunerClick,
+  onTranscribeClick,
   onRemoved,
 }: Props) {
   const [section, setSection] = useState<Section>('all');
@@ -77,6 +79,9 @@ export function LibraryPanel({
           </button>
         </div>
       </div>
+      <button className="btn" onClick={onTranscribeClick}>
+        Sacar tab de YouTube o Spotify
+      </button>
 
       <nav className="sections" aria-label="Secciones">
         {(

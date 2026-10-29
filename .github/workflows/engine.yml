@@ -1,0 +1,60 @@
+name: Engine
+
+# Prueba de punta a punta del motor de transcripción en Windows: la misma instalación que hace la
+# app la primera vez y un análisis completo de una canción sintética.
+on:
+  push:
+    branches: [main]
+    paths: ['src-tauri/engine/**', 'src/lib/importers/**', '.github/workflows/engine.yml']
+  pull_request:
+    paths: ['src-tauri/engine/**', 'src/lib/importers/**', '.github/workflows/engine.yml']
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install numpy soundfile librosa "setuptools<81" pytest imageio-ffmpeg
+      - run: python -m pytest -q src-tauri/engine/tests
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: Add-Content $env:GITHUB_ENV "ENGINE_DIR=$env:RUNNER_TEMP\engine"
+      - name: Instalar el motor como lo hace la app
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri\engine\install.ps1 -Dir "$env:ENGINE_DIR" -EngineSource src-tauri\engine
+      - name: Analizar una canción sintética
+        shell: pwsh
+        run: |
+          $py = "$env:ENGINE_DIR\python\python.exe"
+          $env:PATH = "$env:ENGINE_DIR\python\Scripts;$env:PATH"
+          $env:TORCH_HOME = "$env:ENGINE_DIR\models\torch"
+          $env:HF_HOME = "$env:ENGINE_DIR\models\huggingface"
+          & $py src-tauri\engine\tests\make_test_song.py "$env:RUNNER_TEMP\song.wav"
+          & $py src-tauri\engine\bandtabs_engine.py transcribe --source "$env:RUNNER_TEMP\song.wav" --work "$env:RUNNER_TEMP\work" --whisper tiny
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Descargar de YouTube (informativo)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $py = "$env:ENGINE_DIR\python\python.exe"
+          $env:PATH = "$env:ENGINE_DIR\python\Scripts;$env:PATH"
+          & $py -c "import sys; sys.path.insert(0, 'src-tauri/engine'); import bandtabs_engine as e, pathlib; p = pathlib.Path(r'$env:RUNNER_TEMP\yt'); p.mkdir(exist_ok=True); print(e.download_audio('https://www.youtube.com/watch?v=jNQXAC9IVRw', p))"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Convertir el resultado en partitura
+        shell: pwsh
+        run: |
+          $env:ENGINE_RESULT = "$env:RUNNER_TEMP\work\result.json"
+          npx vitest run tests/engine-result.test.ts

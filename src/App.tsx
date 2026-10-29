@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Player } from './components/Player';
 import { LibraryPanel } from './components/LibraryPanel';
 import { Tuner } from './components/Tuner';
+import { TranscribeDialog } from './components/TranscribeDialog';
 import { db, type Song } from './lib/db';
 import { Library, type ImportResult } from './lib/library';
 import { ACCEPTED_EXTENSIONS } from './lib/formats';
@@ -41,6 +42,7 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [tunerOpen, setTunerOpen] = useState(false);
+  const [transcribeOpen, setTranscribeOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const open = useCallback(
@@ -113,6 +115,7 @@ export function App() {
         onOpen={open}
         onImportClick={() => fileInputRef.current?.click()}
         onTunerClick={() => setTunerOpen(true)}
+        onTranscribeClick={() => setTranscribeOpen(true)}
         onRemoved={(id) => {
           if (current?.song.id === id) setCurrent(null);
         }}
@@ -159,6 +162,12 @@ export function App() {
       />
 
       {tunerOpen && <Tuner onClose={() => setTunerOpen(false)} />}
+      {transcribeOpen && (
+        <TranscribeDialog
+          onClose={() => setTranscribeOpen(false)}
+          onImport={(name, data) => importFiles([{ name, data }])}
+        />
+      )}
       {dragging && (
         <div className="drop-overlay">
           <div>Suelta los archivos para añadirlos a tu biblioteca</div>

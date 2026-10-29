@@ -30,6 +30,7 @@ export function pitchName(midi: number): string {
   return `${NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
 }
 
+/** Entre paréntesis: si no, un acorde "(0.1 2.2)" justo después se leería como parte de la afinación. */
 export function tuningToTex(tuning: number[]): string {
-  return tuning.map(pitchName).join(' ');
+  return `(${tuning.map(pitchName).join(' ')})`;
 }

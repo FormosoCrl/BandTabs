@@ -55,6 +55,11 @@
       }
     },
     "publisher": "BandTabs",
-    "category": "Music"
+    "category": "Music",
+    "resources": {
+      "engine/bandtabs_engine.py": "engine/bandtabs_engine.py",
+      "engine/install.ps1": "engine/install.ps1",
+      "engine/requirements.lock": "engine/requirements.lock"
+    }
   }
 }

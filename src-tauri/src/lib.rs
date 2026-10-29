@@ -1,6 +1,15 @@
+mod engine;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .manage(engine::EngineState::default())
+    .invoke_handler(tauri::generate_handler![
+      engine::engine_status,
+      engine::engine_install,
+      engine::engine_transcribe,
+      engine::engine_cancel
+    ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .setup(|app| {
