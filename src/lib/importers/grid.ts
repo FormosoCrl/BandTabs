@@ -12,8 +12,20 @@ export interface GridEvent {
   lyric?: string;
 }
 
-function effects(ev: GridEvent): string {
-  const props: string[] = [];
+// Duraciones de una sola figura, en semicorcheas, con su valor alphaTex y si lleva puntillo.
+const FIGURES: [steps: number, value: number, dotted: boolean][] = [
+  [16, 1, false],
+  [12, 2, true],
+  [8, 2, false],
+  [6, 4, true],
+  [4, 4, false],
+  [3, 8, true],
+  [2, 8, false],
+  [1, 16, false],
+];
+
+function effects(ev: GridEvent, dotted = false): string {
+  const props: string[] = dotted ? ['d'] : [];
   if (ev.chord) props.push(`ch ${quote(ev.chord)}`);
   if (ev.lyric) props.push(`lyrics ${quote(ev.lyric)}`);
   return props.length ? `{${props.join(' ')}}` : '';
@@ -40,10 +52,16 @@ export function buildBars(events: GridEvent[], barCount: number, barSteps: numbe
       if (ev.step > pos) rest(ev.step - pos);
       const next = Math.min(ordered[cursor]?.step ?? barEnd, barEnd);
       const soundEnd = ev.body ? Math.min(Math.max(ev.end, ev.step + 1), next) : next;
-      const [first, ...remaining] = splitDuration(soundEnd - ev.step);
-      beats.push(`${ev.body ?? 'r'}.${first}${effects(ev)}`);
-      remaining.forEach((d) => beats.push(`r.${d}`));
-      pos = ev.step + splitDuration(soundEnd - ev.step).reduce((n, d) => n + 16 / d, 0);
+      // La nota ocupa la figura más larga que cabe (con puntillo si hace falta) y lo que sobra
+      // hasta el siguiente evento queda en silencio, así se leen negras con puntillo y no
+      // corcheas seguidas de silencios.
+      const [steps, value, dotted] = FIGURES.find(([n]) => n <= soundEnd - ev.step)!;
+      beats.push(`${ev.body ?? 'r'}.${value}${effects(ev, dotted)}`);
+      pos = ev.step + steps;
+      if (!ev.body && next > pos) {
+        rest(next - pos);
+        pos = next;
+      }
     }
     if (pos < barEnd) rest(barEnd - pos);
     bars.push(beats.join(' '));

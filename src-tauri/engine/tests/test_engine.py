@@ -92,3 +92,12 @@ def test_transcribe_drums_tells_kick_snare_and_hihat(tmp_path):
     assert by_time[1.5] == {"snare"}
     assert by_time[1.25] == {"hihat"}
     assert len(hits) == 14
+
+
+def test_clean_chords_quita_armonicos_y_junta_el_rasgueo():
+    n = lambda start, pitch, vel=0.8: {"start": start, "end": start + 0.4, "pitch": pitch, "velocity": vel}
+    # Quinta de potencia en Mi (40, 47, 52) rasgueada en 30 ms, con armónicos 59 (+19) y 64 (+24).
+    notes = [n(1.0, 40), n(1.01, 47), n(1.03, 52), n(1.02, 59, 0.5), n(1.02, 64, 0.5), n(1.0, 70, 0.2)]
+    out = engine.clean_chords(notes, max_notes=4)
+    assert [x["pitch"] for x in out] == [40, 47, 52]
+    assert {x["start"] for x in out} == {1.0}

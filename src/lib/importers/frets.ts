@@ -34,9 +34,15 @@ export function assignFrets(chords: number[][], tuning: number[]): FretPosition[
         const fretted = chosen.filter((c) => c.fret > 0).map((c) => c.fret);
         const span = fretted.length ? Math.max(...fretted) - Math.min(...fretted) : 0;
         const center = fretted.length ? fretted.reduce((a, b) => a + b, 0) / fretted.length : hand;
+        // Cuerdas saltadas dentro de un acorde: se pueden tocar, pero es raro en una tab real.
+        const strings = chosen.map((c) => c.string);
+        const skipped = strings.length
+          ? Math.max(...strings) - Math.min(...strings) + 1 - strings.length
+          : 0;
         const cost =
           (span > 4 ? 100 : span * 2) +
           Math.abs(center - hand) +
+          skipped * 1.5 +
           chosen.reduce((n, c) => n + c.fret * 0.1, 0);
         if (cost < bestCost) {
           bestCost = cost;

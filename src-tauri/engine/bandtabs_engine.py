@@ -263,8 +263,10 @@ def analyze_rhythm(audio, stems: dict[str, Path] | None) -> dict:
 
 NOTE_RANGES = {
     # stem: (instrumento, programa MIDI, Hz mínimo, Hz máximo, monofónico)
-    "guitar": ("guitar", 29, 75, 1400, False),
-    "bass": ("bass", 33, 30, 420, True),
+    # Guitarra desde Do2 para que entren Drop D, Drop C y similares.
+    "guitar": ("guitar", 29, 64, 1400, False),
+    # Por encima de Mi4 en el bajo casi todo son armónicos de la nota real.
+    "bass": ("bass", 33, 30, 330, True),
     "piano": ("piano", 0, 27, 4200, False),
     "vocals": ("vocals", 54, 75, 1100, True),
 }
@@ -284,7 +286,50 @@ def monophonic(notes: list[dict]) -> list[dict]:
     return [n for n in out if n["end"] - n["start"] > 0.05]
 
 
-def transcribe_notes(stems: dict[str, Path]) -> list[dict]:
+# Intervalos que coinciden con armónicos de una nota más grave (octava + quinta, dos octavas,
+# dos octavas + tercera). Con distorsión, Basic Pitch los toma por notas reales.
+OVERTONES = (19, 24, 28, 31)
+
+
+def clean_chords(notes: list[dict], max_notes: int, window: float = 0.05) -> list[dict]:
+    """
+    Limpia los acordes de guitarra o piano: agrupa las notas que empiezan casi a la vez (un
+    rasgueo no es simultáneo), quita armónicos y notas mucho más flojas que el resto del acorde,
+    y deja como mucho `max_notes`. Todas las notas del grupo empiezan con la primera.
+    """
+    out: list[dict] = []
+    ordered = sorted(notes, key=lambda n: n["start"])
+    i = 0
+    while i < len(ordered):
+        group = [ordered[i]]
+        while i + len(group) < len(ordered) and ordered[i + len(group)]["start"] - group[0]["start"] <= window:
+            group.append(ordered[i + len(group)])
+        i += len(group)
+        loudest = max(n["velocity"] for n in group)
+        group = [n for n in group if n["velocity"] >= loudest * 0.45]
+        by_pitch: dict[int, dict] = {}
+        for n in group:
+            if n["pitch"] not in by_pitch or n["velocity"] > by_pitch[n["pitch"]]["velocity"]:
+                by_pitch[n["pitch"]] = n
+        pitches = sorted(by_pitch)
+        keep = []
+        for p in pitches:
+            n = by_pitch[p]
+            parent = next((by_pitch[p - k] for k in OVERTONES if p - k in by_pitch), None)
+            octave = by_pitch.get(p - 12)
+            if parent and n["velocity"] < parent["velocity"] * 1.1:
+                continue
+            if octave and n["velocity"] < octave["velocity"] * 0.6:
+                continue
+            keep.append(n)
+        keep = sorted(keep, key=lambda n: -n["velocity"])[:max_notes]
+        start = group[0]["start"]
+        for n in sorted(keep, key=lambda n: n["pitch"]):
+            out.append({**n, "start": start})
+    return out
+
+
+def transcribe_notes(stems: dict[str, Path], tempo: float = 120.0) -> list[dict]:
     from basic_pitch import ICASSP_2022_MODEL_PATH
     from basic_pitch.inference import Model, predict
 
@@ -299,9 +344,10 @@ def transcribe_notes(stems: dict[str, Path]) -> list[dict]:
         _, _, events = predict(
             str(stems[stem]),
             model,
-            onset_threshold=0.55,
+            onset_threshold=0.6 if kind == "guitar" else 0.55,
             frame_threshold=0.3,
-            minimum_note_length=90,
+            # Nada más corto que una semicorchea a este tempo (con margen).
+            minimum_note_length=max(90.0, 60000 / max(tempo, 40) / 4 * 0.7),
             minimum_frequency=fmin,
             maximum_frequency=fmax,
             melodia_trick=True,
@@ -313,6 +359,10 @@ def transcribe_notes(stems: dict[str, Path]) -> list[dict]:
         ]
         if mono:
             notes = monophonic(notes)
+        elif kind == "guitar":
+            notes = clean_chords(notes, max_notes=4)
+        else:
+            notes = clean_chords(notes, max_notes=6)
         if len(notes) >= 8:
             tracks.append({"stem": stem, "kind": kind, "name": TRACK_NAMES[stem], "program": program, "notes": notes})
     progress("notes", 1, "Notas transcritas")
@@ -459,7 +509,7 @@ def command_transcribe(args: argparse.Namespace) -> None:
     audio = load_audio(source["path"])
     stems = separate(audio, work)
     rhythm = analyze_rhythm(audio, stems)
-    tracks = transcribe_notes(stems)
+    tracks = transcribe_notes(stems, rhythm["tempo"])
     drums = transcribe_drums(stems["drums"]) if "drums" in stems else []
     chords = detect_chords(stems, audio, rhythm["beats"])
     lyrics = {"language": None, "words": []}

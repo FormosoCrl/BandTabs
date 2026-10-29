@@ -72,7 +72,14 @@ function groupOnsets(notes: EngineResult['tracks'][number]['notes'], toStep: (t:
     onset.end = Math.max(onset.end, toStep(n.end));
     map.set(step, onset);
   }
-  return [...map.values()].sort((a, b) => a.step - b.step);
+  const onsets = [...map.values()].sort((a, b) => a.step - b.step);
+  // Los huecos cortos entre notas suelen ser imprecisión al detectar dónde acaba cada una: se
+  // alarga la nota hasta la siguiente para no llenar la tab de silencios de semicorchea.
+  onsets.forEach((o, i) => {
+    const next = onsets[i + 1];
+    if (next && next.step - o.end <= 2) o.end = next.step;
+  });
+  return onsets;
 }
 
 /** Pone un acorde o una sílaba en el evento que empieza en `step` o, si suena una nota, en esa nota. */
