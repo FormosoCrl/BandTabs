@@ -1,6 +1,6 @@
 # BandTabs: roadmap
 
-> Estado: **aprobado**. Fases 0, 1 y 2 implementadas (octubre de 2026).
+> Estado: **aprobado**. Fases 0, 1, 2 y la primera parte de la 4 implementadas (octubre de 2026).
 > Alcance actual: **solo app de PC**. Móvil y otras plataformas, más adelante.
 
 BandTabs es una alternativa open source a Songsterr. El objetivo es cubrir tres cosas:
@@ -19,7 +19,7 @@ BandTabs es una alternativa open source a Songsterr. El objetivo es cubrir tres 
 | Frontend | Vite + React + TypeScript |
 | Motor de tablaturas | [alphaTab](https://alphatab.net) (MPL‑2.0): lee Guitar Pro 3‑7, GPX y MusicXML; dibuja tab y partitura; reproduce con sintetizador |
 | Almacenamiento | IndexedDB en el navegador (con Dexie). Tus archivos no salen de tu equipo |
-| Servicio de IA | Python + FastAPI en un contenedor Docker, que corre en tu PC (GPU opcional) |
+| Transcripción | Python propio que la app instala sola la primera vez y ejecuta en tu PC, sin Docker |
 | Otras plataformas | macOS y Linux salen casi gratis con Tauri. Android e iOS con Tauri Mobile, en una fase posterior |
 | Licencia | GPL‑3.0 o posterior (protege que los forks sigan siendo abiertos). Se puede cambiar mientras no haya contribuciones externas |
 
@@ -200,12 +200,20 @@ Cada fase termina con algo usable.
 - Cargar MP3/WAV propio y sincronizarlo con la tab (manual y automático).
 - Cambio de velocidad sin cambiar tono sobre audio real.
 
-### Fase 4: Transcripción con IA
-1. Servicio Docker con separación de pistas (Demucs) y backing tracks.
-2. Tempo y compases (Beat This!).
+### Fase 4: Transcripción con IA (primera parte ✅)
+Hecho en la versión 0.3.0, antes que la fase 3 porque se pidió primero:
+- Enlace de YouTube, de Spotify (solo metadatos; el audio se busca en YouTube) o archivo propio.
+- Python embebido que la app instala sola (unos 2 GB con los modelos), sin Docker.
+- Demucs separa seis pistas; Basic Pitch saca las notas; librosa el tempo, los compases, los
+  acordes y la batería (bombo, caja y charles); faster-whisper la letra.
+- Guitarra y bajo en tablatura con cuerda y traste calculados, piano y voz en partitura.
+
+Pendiente:
+1. Backing tracks a partir de la separación.
+2. Mejor detección de tempo y compases (Beat This!) y de batería (ADTOF).
 3. Bajo y batería (los que mejor salen), luego guitarra, piano y voz.
 4. Asignación cuerda/traste y exportación a Guitar Pro.
-5. Entrada por enlace de YouTube (local, opcional) y metadatos de Spotify.
+5. Aceleración con GPU NVIDIA cuando la haya.
 6. Ajustes manuales: compás, anacrusa, tempo, tresillos, afinación, cejilla.
 
 ### Fase 5: Editor
@@ -214,7 +222,6 @@ Cada fase termina con algo usable.
 - Historial de versiones.
 
 ### Fase 6: Otras plataformas y extras
-- Que la app de escritorio lance el servicio de IA sin Docker.
 - macOS, Linux, Android e iOS.
 - Modo práctica con micrófono.
 - Catálogo comunitario solo con contenido de licencia libre (opcional).
