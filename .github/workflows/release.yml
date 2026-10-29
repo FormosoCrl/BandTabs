@@ -1,6 +1,7 @@
 name: Release
 
-# Publica el instalador de Windows. Dos formas:
+# Compila el instalador de Windows y lo deja como borrador privado en Releases (no se publica;
+# se descarga de ahí para subirlo a la tienda). Dos formas:
 # - subir una etiqueta: git tag v0.2.0 && git push --tags
 # - desde GitHub: Actions → Release → Run workflow, escribiendo la versión (crea la etiqueta).
 on:
@@ -38,6 +39,6 @@ jobs:
           releaseCommitish: ${{ github.sha }}
           releaseBody: |
             Descarga `BandTabs_..._x64-setup.exe`, ábrelo y listo. No hace falta instalar nada más.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           uploadWorkflowArtifacts: true

@@ -39,8 +39,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "Visor y reproductor de tablaturas open source",
-    "license": "GPL-3.0-or-later",
+    "shortDescription": "Visor, reproductor y transcriptor de tablaturas",
+    "copyright": "Copyright (c) 2026 Formoso. Todos los derechos reservados.",
+    "licenseFile": "../LICENSE",
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"
@@ -59,7 +60,9 @@
     "resources": {
       "engine/bandtabs_engine.py": "engine/bandtabs_engine.py",
       "engine/install.ps1": "engine/install.ps1",
-      "engine/requirements.lock": "engine/requirements.lock"
+      "engine/requirements.lock": "engine/requirements.lock",
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "../LICENSE": "LICENSE.txt"
     }
   }
 }

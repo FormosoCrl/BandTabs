@@ -1,9 +1,10 @@
 [package]
 name = "bandtabs"
 version = "0.4.0"
-description = "Visor y reproductor de tablaturas open source"
-authors = ["BandTabs contributors"]
-license = "GPL-3.0-or-later"
+description = "Visor, reproductor y transcriptor de tablaturas"
+authors = ["Formoso (FormosoCrl)"]
+license-file = "../LICENSE"
+publish = false
 repository = ""
 edition = "2024"
 rust-version = "1.90"
