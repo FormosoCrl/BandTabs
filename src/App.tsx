@@ -130,20 +130,24 @@ export function App() {
           />
         ) : (
           <div className="welcome">
-            <h1>Tus tablaturas, sin muros de pago</h1>
+            <h1>Ninguna canción abierta</h1>
             <p>
-              Importa archivos Guitar Pro (.gp, .gp3, .gp4, .gp5, .gpx), MusicXML, MIDI o tabs en
-              texto (.txt). Se guardan solo en este equipo.
+              Abre un archivo Guitar Pro (.gp, .gp3, .gp4, .gp5, .gpx), MusicXML, MIDI o una tab en
+              texto, o pega un enlace de YouTube o Spotify para sacar un borrador. Las canciones se
+              guardan en este equipo.
             </p>
             <div className="welcome-actions">
               <button className="btn primary" onClick={() => fileInputRef.current?.click()}>
-                Importar archivos
+                Abrir archivo
               </button>
-              <button className="btn" onClick={importDemo}>
-                Probar con un ejemplo
+              <button className="btn" onClick={() => setTranscribeOpen(true)}>
+                Desde enlace
+              </button>
+              <button className="link" onClick={importDemo}>
+                Abrir la canción de ejemplo
               </button>
             </div>
-            <p className="hint">También puedes arrastrar archivos a cualquier parte de la ventana.</p>
+            <p className="hint">También puedes soltar archivos sobre la ventana.</p>
           </div>
         )}
       </main>
@@ -170,7 +174,7 @@ export function App() {
       )}
       {dragging && (
         <div className="drop-overlay">
-          <div>Suelta los archivos para añadirlos a tu biblioteca</div>
+          <div>Suelta para añadir a la biblioteca</div>
         </div>
       )}
       {notice && (

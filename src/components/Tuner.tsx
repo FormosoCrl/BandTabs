@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PitchDetector } from 'pitchy';
 import { midiToName, noteFromFrequency, TUNER_PRESETS, type DetectedNote } from '../lib/tuner';
+import { Icon } from './Icon';
 
 interface Props {
   onClose: () => void;
@@ -83,7 +84,7 @@ export function Tuner({ onClose }: Props) {
         <header>
           <h2>Afinador</h2>
           <button className="icon" onClick={onClose} aria-label="Cerrar">
-            ✕
+            <Icon name="close" />
           </button>
         </header>
         {error ? (

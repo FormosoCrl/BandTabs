@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import type { Song } from '../lib/db';
 import type { Library, SongSort } from '../lib/library';
 import { INSTRUMENT_LABELS, type InstrumentKind } from '../lib/instruments';
+import { Icon } from './Icon';
 
 type Section = 'all' | 'favorites' | 'recent' | 'playlist';
 
@@ -64,24 +65,19 @@ export function LibraryPanel({
   return (
     <aside className="library">
       <div className="library-top">
-        <div className="brand">
-          <span className="logo" aria-hidden>
-            ♪
-          </span>
-          BandTabs
-        </div>
-        <div className="top-actions">
-          <button className="btn" onClick={onTunerClick} title="Afinador">
-            Afinador
-          </button>
-          <button className="btn primary" onClick={onImportClick}>
-            + Importar
-          </button>
-        </div>
+        <div className="brand">BandTabs</div>
+        <button className="btn ghost" onClick={onTunerClick}>
+          Afinador
+        </button>
       </div>
-      <button className="btn" onClick={onTranscribeClick}>
-        Sacar tab de YouTube o Spotify
-      </button>
+      <div className="library-actions">
+        <button className="btn" onClick={onImportClick} title="Guitar Pro, MusicXML, MIDI o texto">
+          <Icon name="open" /> Abrir archivo
+        </button>
+        <button className="btn" onClick={onTranscribeClick} title="YouTube, Spotify o un archivo de audio">
+          <Icon name="link" /> Desde enlace
+        </button>
+      </div>
 
       <nav className="sections" aria-label="Secciones">
         {(
@@ -207,12 +203,12 @@ export function LibraryPanel({
 }
 
 function emptyMessage(section: Section, playlistId: number | null): string {
-  if (section === 'favorites') return 'Aún no tienes favoritas. Pulsa ☆ en una canción.';
+  if (section === 'favorites') return 'Aún no hay favoritas. Marca la estrella de una canción.';
   if (section === 'recent') return 'Las canciones que abras aparecerán aquí.';
   if (section === 'playlist') {
     return playlistId == null ? 'Crea o elige una lista.' : 'Esta lista está vacía.';
   }
-  return 'No hay canciones. Importa archivos Guitar Pro, MusicXML, MIDI o tabs en texto.';
+  return 'Biblioteca vacía.';
 }
 
 interface SongItemProps {
@@ -241,13 +237,10 @@ function SongItem({
     <li className={`song ${active ? 'active' : ''}`}>
       <button className="song-main" onClick={() => onOpen(song.id)}>
         <span className="song-title">{song.title}</span>
-        <span className="song-meta">{song.artist || 'Artista desconocido'}</span>
-        <span className="badges">
-          {song.instruments.map((i) => (
-            <span key={i} className="badge">
-              {INSTRUMENT_LABELS[i]}
-            </span>
-          ))}
+        <span className="song-meta">
+          {song.artist || 'Artista desconocido'}
+          {song.instruments.length > 0 &&
+            ` · ${song.instruments.map((i) => INSTRUMENT_LABELS[i].toLowerCase()).join(', ')}`}
         </span>
       </button>
       <div className="song-actions">
@@ -257,7 +250,7 @@ function SongItem({
           aria-pressed={song.favorite === 1}
           title={song.favorite ? 'Quitar de favoritas' : 'Añadir a favoritas'}
         >
-          {song.favorite ? '★' : '☆'}
+          <Icon name="star" filled={song.favorite === 1} />
         </button>
         <button
           className="icon"
@@ -268,7 +261,7 @@ function SongItem({
           aria-expanded={menuOpen}
           title="Más opciones"
         >
-          ⋯
+          <Icon name="more" />
         </button>
       </div>
       {menuOpen && (

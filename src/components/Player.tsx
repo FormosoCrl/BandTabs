@@ -6,6 +6,7 @@ import { INSTRUMENT_LABELS } from '../lib/instruments';
 import { concatFloat32, encodeWav, exportGuitarPro, exportMidi } from '../lib/export';
 import { safeFileName, saveFile } from '../lib/save';
 import { ChordSheetView } from './ChordSheetView';
+import { Icon } from './Icon';
 
 interface Props {
   song: Song;
@@ -263,10 +264,11 @@ export function Player({ song, data, onNotice }: Props) {
             disabled={!playerReady || !score}
             title={playerReady ? 'Reproducir o pausar (barra espaciadora)' : 'Cargando sonidos…'}
           >
-            {playing ? '❚❚ Pausa' : '▶ Reproducir'}
+            {playing ? <Icon name="pause" /> : <Icon name="play" />}
+            {playing ? 'Pausa' : 'Reproducir'}
           </button>
           <button className="btn" onClick={() => apiRef.current?.stop()} disabled={!playerReady}>
-            ■ Parar
+            <Icon name="stop" /> Parar
           </button>
           <span className="time">
             {formatTime(position.current)} / {formatTime(position.end)}
@@ -324,14 +326,14 @@ export function Player({ song, data, onNotice }: Props) {
           aria-pressed={loop}
           title="Repite la selección o, si no hay, la canción entera (tecla L)"
         >
-          ⟲ Repetir
+          <Icon name="loop" /> Repetir
         </button>
         {hasRange ? (
           <button className="link" onClick={clearRange}>
             Quitar selección
           </button>
         ) : (
-          <span className="hint">Arrastra sobre la partitura para elegir compases</span>
+          <span className="hint">Arrastra sobre los compases para repetir solo un trozo</span>
         )}
         <button
           className={`toggle ${countIn ? 'on' : ''}`}
@@ -420,7 +422,7 @@ export function Player({ song, data, onNotice }: Props) {
           {/* alphaTab sigue montado en la vista de acordes para que la reproducción continúe. */}
           <div className="score-viewport" ref={viewportRef} hidden={view === 'chords'}>
             {error && <div className="error">No se pudo abrir el archivo: {error}</div>}
-            {rendering && !error && <div className="loading">Dibujando tablatura…</div>}
+            {rendering && !error && <div className="loading">Cargando…</div>}
             <div ref={hostRef} className="score-host" />
           </div>
         </div>

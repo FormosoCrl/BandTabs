@@ -11,6 +11,7 @@ import {
   type EngineStatus,
 } from '../lib/engine';
 import { transcriptionToAlphaTex } from '../lib/importers/transcription';
+import { Icon } from './Icon';
 
 interface Props {
   onClose: () => void;
@@ -111,14 +112,14 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
       <div
         className="modal transcribe"
         role="dialog"
-        aria-label="Sacar la tablatura de una canción"
+        aria-label="Transcribir desde un enlace"
         onClick={(e) => e.stopPropagation()}
       >
         <header>
-          <h2>Sacar la tablatura de una canción</h2>
+          <h2>Transcribir desde un enlace</h2>
           {!busy && (
             <button className="icon" onClick={onClose} aria-label="Cerrar">
-              ✕
+              <Icon name="close" />
             </button>
           )}
         </header>
@@ -196,7 +197,7 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
                 onClick={() => void start()}
                 disabled={kind === 'unknown' || !status}
               >
-                {ready ? 'Empezar' : 'Instalar y empezar'}
+                {ready ? 'Transcribir' : 'Instalar y transcribir'}
               </button>
             </div>
           </>
