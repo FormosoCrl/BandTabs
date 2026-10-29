@@ -1,4 +1,4 @@
-# Instala el motor de transcripción de BandTabs en la carpeta indicada. Lo lanza la app la primera
+﻿# Instala el motor de transcripción de BandTabs en la carpeta indicada. Lo lanza la app la primera
 # vez que alguien usa "Desde enlace"; no hace falta ejecutarlo a mano.
 #
 # Escribe una línea JSON por paso para que la app muestre el progreso.

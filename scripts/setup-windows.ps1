@@ -1,4 +1,4 @@
-# Instala lo necesario para desarrollar BandTabs en Windows y arranca la app.
+﻿# Instala lo necesario para desarrollar BandTabs en Windows y arranca la app.
 # Uso: doble clic en iniciar.cmd, o: powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
