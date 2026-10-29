@@ -1,0 +1,7 @@
+node_modules/
+dist/
+# El plugin de alphaTab copia aquí fuentes y soundfont en cada arranque.
+public/font/
+public/soundfont/
+*.log
+.DS_Store
