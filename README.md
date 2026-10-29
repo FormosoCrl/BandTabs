@@ -19,46 +19,29 @@ sin muros de pago. Tus archivos se guardan solo en tu equipo.
 Lo siguiente (velocidad, loop, metrónomo, imprimir, exportar, transcripción con IA…) está en el
 [roadmap](docs/ROADMAP.md).
 
-## Arrancar la app en Windows
+## Instalar BandTabs
 
-### 1. Requisitos (una sola vez)
+1. Entra en [Releases](https://github.com/FormosoCrl/BandTabs/releases/latest).
+2. Descarga `BandTabs_X.Y.Z_x64-setup.exe`.
+3. Ábrelo. Se instala sin pedir permisos de administrador y queda en el menú Inicio.
 
-1. **Node.js 22 LTS** o superior: <https://nodejs.org>.
-2. **Microsoft C++ Build Tools**: <https://visualstudio.microsoft.com/visual-cpp-build-tools/>.
-   En el instalador marca **"Desarrollo para el escritorio con C++"**.
-3. **Rust**: instala `rustup` desde <https://rustup.rs> y acepta las opciones por defecto.
-4. **WebView2** ya viene con Windows 10 y 11.
+No hace falta instalar nada más: el instalador trae todo lo necesario. Si Windows SmartScreen
+avisa de que la app no es conocida, pulsa **Más información → Ejecutar de todas formas** (pasa
+con cualquier app nueva que no tiene firma de pago).
 
-Cierra y vuelve a abrir la terminal después de instalar todo.
+## Trabajar en el código (Windows)
 
-### 2. Instalar dependencias
+Haz doble clic en **`iniciar.cmd`**. La primera vez instala por ti Node.js, Rust y las
+herramientas de C++ de Microsoft (con `winget`), descarga las dependencias del proyecto y abre la
+app. Las siguientes veces la abre directamente.
 
-```powershell
-cd C:\Users\formo\Desktop\Repositorios\Apps\BandTabs
-npm install
-```
+Para generar tú mismo el instalador: `npm run app:build`. Queda en
+`src-tauri\target\release\bundle\nsis\`.
 
-### 3. Abrir la app en modo desarrollo
+Cada vez que se sube una etiqueta `vX.Y.Z` a GitHub, la acción **Release** compila el instalador
+y lo publica en Releases.
 
-```powershell
-npm run app
-```
-
-La primera vez tarda unos minutos porque compila la parte de Rust. Después es casi inmediato, y
-los cambios en `src/` se ven al momento.
-
-### 4. Crear el instalador
-
-```powershell
-npm run app:build
-```
-
-El instalador queda en `src-tauri\target\release\bundle\nsis\` (`.exe`) y en
-`src-tauri\target\release\bundle\msi\` (`.msi`).
-
-### Solo la interfaz, en el navegador
-
-`npm run dev` y abre <http://localhost:1420>. Útil para trabajar en la interfaz sin compilar Rust.
+Para trabajar solo en la interfaz, en el navegador: `npm run dev` y abre <http://localhost:1420>.
 
 ## Desarrollo
 
@@ -66,6 +49,7 @@ El instalador queda en `src-tauri\target\release\bundle\nsis\` (`.exe`) y en
 |---|---|
 | `npm run app` | App de escritorio en modo desarrollo |
 | `npm run app:build` | Instalador para Windows |
+| `iniciar.cmd` | Instala requisitos y abre la app (Windows) |
 | `npm run dev` | Interfaz en el navegador |
 | `npm test` | Tests (Vitest) |
 | `npm run lint` | ESLint |
