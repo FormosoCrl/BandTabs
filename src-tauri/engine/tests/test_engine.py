@@ -101,3 +101,82 @@ def test_clean_chords_quita_armonicos_y_junta_el_rasgueo():
     out = engine.clean_chords(notes, max_notes=4)
     assert [x["pitch"] for x in out] == [40, 47, 52]
     assert {x["start"] for x in out} == {1.0}
+
+
+def test_split_by_pan_separa_dos_guitarras_en_los_lados(tmp_path):
+    # Guitarra A sonando a la izquierda (La3) y guitarra B a la derecha (Mi5).
+    sr = 44100
+    a = tone([220.0], 3, sr)
+    b = tone([659.3], 3, sr)
+    stereo = np.stack([a + 0.1 * b, b + 0.1 * a], axis=1).astype(np.float32)
+    path = tmp_path / "guitar.wav"
+    sf.write(path, stereo, sr)
+    parts = engine.split_by_pan(path, tmp_path)
+    assert set(parts) == {"left", "right"}
+
+    def peak(side):
+        import librosa
+
+        y, rate = librosa.load(parts[side], sr=None)
+        spectrum = np.abs(np.fft.rfft(y))
+        return np.fft.rfftfreq(len(y), 1 / rate)[np.argmax(spectrum)]
+
+    assert abs(peak("left") - 220) < 5
+    assert abs(peak("right") - 659.3) < 5
+
+
+def test_split_by_pan_no_parte_una_guitarra_centrada(tmp_path):
+    a = tone([220.0, 330.0], 2)
+    path = tmp_path / "guitar.wav"
+    sf.write(path, np.stack([a, a], axis=1), SR)
+    assert engine.split_by_pan(path, tmp_path) == {}
+
+
+def _notes(pitches, step=0.25, start=0.0):
+    return [
+        {"start": start + i * step, "end": start + i * step + 0.2, "pitch": p, "velocity": 0.8}
+        for i, p in enumerate(pitches)
+    ]
+
+
+def test_guitar_parts_junta_la_misma_parte_doblada_y_separa_partes_distintas(tmp_path):
+    riff = _notes([40, 47, 52, 47] * 4)
+    lead = _notes([64, 67, 69, 71, 72, 71, 69, 67] * 2)
+    stem = tmp_path / "stems" / "guitar.wav"
+    stem.parent.mkdir()
+    stem.touch()
+
+    def fake_pan(sides):
+        return lambda path, out_dir: {s: tmp_path / f"{s}.wav" for s in sides}
+
+    notes_for = {"left": riff, "right": riff, "center": lead}
+    raw = lambda path: notes_for.get(path.stem, riff)  # noqa: E731
+
+    original = engine.split_by_pan
+    try:
+        # Rítmica doblada a izquierda y derecha: una sola guitarra.
+        engine.split_by_pan = fake_pan(["left", "right"])
+        parts = engine.guitar_parts(stem, raw, None, tmp_path)
+        assert [name for _, name, _ in parts] == ["Guitarra"]
+
+        # Rítmica a la izquierda y solista en el centro: dos guitarras.
+        engine.split_by_pan = fake_pan(["left", "center"])
+        parts = engine.guitar_parts(stem, raw, None, tmp_path)
+        assert sorted(name for _, name, _ in parts) == ["Guitarra (centro)", "Guitarra (izquierda)"]
+    finally:
+        engine.split_by_pan = original
+
+
+def test_guitar_parts_parte_por_registro_si_se_piden_dos(tmp_path):
+    # Acordes graves con una melodía aguda por encima, todo en el centro.
+    chords = [n for i in range(12) for n in _notes([40, 47, 52], step=0.0, start=i * 0.5)]
+    melody = _notes([71, 74, 76, 74, 71, 69, 71, 74, 76, 79, 76, 74], step=0.5, start=0.25)
+    mixed = chords + melody
+    stem = tmp_path / "stems" / "guitar.wav"
+    stem.parent.mkdir()
+    sf.write(stem, np.stack([tone([110.0], 1)] * 2, axis=1), SR)
+    parts = engine.guitar_parts(stem, lambda path: mixed, 2, tmp_path)
+    names = {name: notes for _, name, notes in parts}
+    assert set(names) == {"Guitarra rítmica", "Guitarra solista"}
+    assert {n["pitch"] for n in names["Guitarra solista"]} == set(p["pitch"] for p in melody)
+    assert {n["pitch"] for n in names["Guitarra rítmica"]} == {40, 47, 52}

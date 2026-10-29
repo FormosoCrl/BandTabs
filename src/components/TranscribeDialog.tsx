@@ -41,6 +41,7 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
   const [lyrics, setLyrics] = useState(true);
   const [guitarTuning, setGuitarTuning] = useState<TuningValues | null>(null);
   const [bassTuning, setBassTuning] = useState<TuningValues | null>(null);
+  const [guitars, setGuitars] = useState<number | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('');
@@ -96,7 +97,7 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
       setPhase('working');
       setProgress(0);
       setMessage('Empezando…');
-      const result = await transcribe(source.trim(), lyrics);
+      const result = await transcribe(source.trim(), lyrics, guitars);
       const tex = transcriptionToAlphaTex(result, { guitar: guitarTuning, bass: bassTuning });
       await onImport(`${result.title}.atex`, new TextEncoder().encode(tex));
       onClose();
@@ -194,11 +195,25 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
                 />
               </label>
             </div>
+            <label className="field">
+              Guitarras
+              <select
+                value={guitars ?? ''}
+                onChange={(e) => setGuitars(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">Automático (según el estéreo)</option>
+                <option value="1">Una guitarra</option>
+                <option value="2">Dos guitarras</option>
+                <option value="3">Tres guitarras</option>
+              </select>
+            </label>
 
             <p className="note">
               Se separan los instrumentos y se escriben guitarra, bajo, piano, voz y batería, con los
               acordes y la letra. El resultado es un borrador: acierta bastante con el bajo y la
-              batería, y menos con guitarras distorsionadas o solos rápidos.
+              batería, y menos con guitarras distorsionadas o solos rápidos. Las guitarras se
+              reparten por el lado del estéreo en que suenan; si pides más de las que salen así, la
+              que más toca se parte en rítmica y solista por registro, que es solo una aproximación.
             </p>
             {!ready && status && (
               <p className="note">

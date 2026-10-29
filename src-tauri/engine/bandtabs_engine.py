@@ -9,7 +9,7 @@ evento en stdout para que la app muestre el progreso:
 
 Uso:
     python bandtabs_engine.py check
-    python bandtabs_engine.py transcribe --source URL_O_ARCHIVO --work CARPETA [--no-lyrics]
+    python bandtabs_engine.py transcribe --source URL_O_ARCHIVO --work CARPETA [--no-lyrics] [--guitars N]
 """
 
 from __future__ import annotations
@@ -329,20 +329,180 @@ def clean_chords(notes: list[dict], max_notes: int, window: float = 0.05) -> lis
     return out
 
 
-def transcribe_notes(stems: dict[str, Path], tempo: float = 120.0) -> list[dict]:
+# --------------------------------------------------------------------------- varias guitarras
+#
+# Demucs da una sola pista de guitarra con todas las guitarras mezcladas. En el rock es habitual
+# grabar cada guitarra en un lado del estéreo (rítmica a la izquierda y otra a la derecha, o la
+# misma parte grabada dos veces, una en cada lado). Aquí se separa la pista por su posición en el
+# estéreo y, si el usuario pide más guitarras de las que salen así, por registro (grave/agudo).
+
+PAN_SIDE = 0.3  # a partir de aquí un sonido se considera "de un lado"
+PAN_MIN_SHARE = 0.15  # energía mínima que tiene que tener un lado para contar como guitarra
+PAN_LABELS = {"left": "izquierda", "center": "centro", "right": "derecha"}
+
+
+def split_by_pan(path: Path, out_dir: Path, sr: int = 22050) -> dict[str, Path]:
+    """
+    Reparte una pista estéreo en izquierda, centro y derecha según en qué canal suena más fuerte
+    cada frecuencia en cada instante. Devuelve solo las partes con suficiente energía; si todo
+    está en el centro (o la pista es mono) devuelve un diccionario vacío.
+    """
+    import librosa
+    import numpy as np
+    import soundfile as sf
+
+    data, file_sr = sf.read(path, dtype="float32", always_2d=True)
+    if data.shape[1] < 2:
+        return {}
+    left = librosa.resample(data[:, 0], orig_sr=file_sr, target_sr=sr)
+    right = librosa.resample(data[:, 1], orig_sr=file_sr, target_sr=sr)
+    n_fft, hop = 2048, 512
+    L = librosa.stft(left, n_fft=n_fft, hop_length=hop)
+    R = librosa.stft(right, n_fft=n_fft, hop_length=hop)
+    mag_l, mag_r = np.abs(L), np.abs(R)
+    pan = (mag_r - mag_l) / (mag_r + mag_l + 1e-9)  # -1 izquierda, +1 derecha
+    energy = mag_l**2 + mag_r**2
+    total = float(energy.sum()) + 1e-12
+
+    # Máscaras suaves para no dejar agujeros en el espectro al pasar de un lado al centro.
+    fade = 0.2
+    w_left = np.clip((-pan - (PAN_SIDE - fade / 2)) / fade, 0, 1)
+    w_right = np.clip((pan - (PAN_SIDE - fade / 2)) / fade, 0, 1)
+    w_center = 1 - w_left - w_right
+    shares = {
+        "left": float((energy * w_left).sum()) / total,
+        "center": float((energy * w_center).sum()) / total,
+        "right": float((energy * w_right).sum()) / total,
+    }
+    if shares["left"] < PAN_MIN_SHARE and shares["right"] < PAN_MIN_SHARE:
+        return {}
+    parts = {
+        "left": L * w_left,
+        "center": (L + R) / 2 * w_center,
+        "right": R * w_right,
+    }
+    out = {}
+    for side, spectrum in parts.items():
+        if shares[side] < PAN_MIN_SHARE:
+            continue
+        audio = librosa.istft(spectrum, hop_length=hop, length=len(left))
+        target = out_dir / f"guitar_{side}.wav"
+        sf.write(target, np.clip(audio, -1, 1), sr, subtype="PCM_16")
+        out[side] = target
+    return out
+
+
+def note_overlap(a: list[dict], b: list[dict], tolerance: float = 0.08) -> float:
+    """Parecido entre dos transcripciones: qué parte de las notas de cada una está en la otra."""
+    if not a or not b:
+        return 0.0
+
+    def matched(xs: list[dict], ys: list[dict]) -> float:
+        by_class: dict[int, list[float]] = {}
+        for y in ys:
+            by_class.setdefault(y["pitch"] % 12, []).append(y["start"])
+        hits = sum(
+            any(abs(x["start"] - t) <= tolerance for t in by_class.get(x["pitch"] % 12, ()))
+            for x in xs
+        )
+        return hits / len(xs)
+
+    return (matched(a, b) + matched(b, a)) / 2
+
+
+def split_by_register(notes: list[dict], window: float = 0.05) -> tuple[list[dict], list[dict]]:
+    """
+    Separa una guitarra mezclada en rítmica (acordes y notas graves) y solista (notas agudas que
+    van por encima de los acordes). Es una aproximación: un riff con una cuerda aguda al aire
+    puede acabar en la solista.
+    """
+    import numpy as np
+
+    ordered = sorted(notes, key=lambda n: n["start"])
+    groups: list[list[dict]] = []
+    for n in ordered:
+        if groups and n["start"] - groups[-1][0]["start"] <= window:
+            groups[-1].append(n)
+        else:
+            groups.append([n])
+    tops = [max(x["pitch"] for x in g) for g in groups if len({x["pitch"] for x in g}) >= 2]
+    reference = np.median(tops) if tops else np.median([n["pitch"] for n in notes] or [60])
+    split = max(55, int(reference) + 3)
+
+    rhythm: list[dict] = []
+    lead: list[dict] = []
+    for g in groups:
+        pitches = sorted({x["pitch"] for x in g})
+        if len(pitches) == 1:
+            (lead if pitches[0] >= split else rhythm).extend(g)
+            continue
+        gaps = [(pitches[i + 1] - pitches[i], i) for i in range(len(pitches) - 1)]
+        gap, at = max(gaps)
+        if gap >= 7 and pitches[-1] >= split:
+            cut = pitches[at]
+            rhythm.extend(x for x in g if x["pitch"] <= cut)
+            lead.extend(x for x in g if x["pitch"] > cut)
+        else:
+            rhythm.extend(g)
+    return rhythm, lead
+
+
+def guitar_parts(
+    stem: Path, raw_notes, wanted: int | None, work: Path
+) -> list[tuple[str, str, list[dict]]]:
+    """
+    Decide cuántas guitarras escribir y con qué notas. `raw_notes(path)` transcribe un audio.
+    `wanted` es el número de guitarras que pide el usuario (None = automático).
+    Devuelve (id, nombre, notas sin limpiar) por guitarra.
+    """
+    if wanted == 1:
+        return [("guitar", "Guitarra", raw_notes(stem))]
+
+    parts: list[tuple[str, str, list[dict]]] = []
+    for side, path in split_by_pan(stem, work / "stems").items():
+        notes = raw_notes(path)
+        if len(notes) >= 8:
+            parts.append((f"guitar_{side}", f"Guitarra ({PAN_LABELS[side]})", notes))
+
+    # La misma parte grabada dos veces (una a cada lado) se queda en una sola guitarra.
+    merged: list[tuple[str, str, list[dict]]] = []
+    for part in sorted(parts, key=lambda p: -len(p[2])):
+        if any(note_overlap(part[2], kept[2]) >= 0.5 for kept in merged):
+            continue
+        merged.append(part)
+    if wanted:
+        merged = merged[:wanted]
+    if not merged:
+        merged = [("guitar", "Guitarra", raw_notes(stem))]
+
+    if wanted and len(merged) < wanted:
+        # Faltan guitarras: la que más notas tiene se parte en rítmica y solista.
+        biggest = max(range(len(merged)), key=lambda i: len(merged[i][2]))
+        ident, name, notes = merged[biggest]
+        rhythm, lead = split_by_register(notes)
+        if len(rhythm) >= 8 and len(lead) >= 8:
+            suffix = name[len("Guitarra"):]
+            merged[biggest : biggest + 1] = [
+                (f"{ident}_rhythm", f"Guitarra rítmica{suffix}", rhythm),
+                (f"{ident}_lead", f"Guitarra solista{suffix}", lead),
+            ]
+
+    if len(merged) == 1:
+        merged = [(merged[0][0], "Guitarra", merged[0][2])]
+    return merged
+
+
+def transcribe_notes(
+    stems: dict[str, Path], tempo: float = 120.0, guitars: int | None = None, work: Path | None = None
+) -> list[dict]:
     from basic_pitch import ICASSP_2022_MODEL_PATH
     from basic_pitch.inference import Model, predict
 
     model = Model(Path(ICASSP_2022_MODEL_PATH).parent / "nmp.onnx")
-    tracks = []
-    wanted = [s for s in NOTE_RANGES if s in stems]
-    for i, stem in enumerate(wanted):
-        kind, program, fmin, fmax, mono = NOTE_RANGES[stem]
-        progress("notes", i / len(wanted), f"Transcribiendo {TRACK_NAMES[stem].lower()}…")
-        if rms(stems[stem]) < 0.004:
-            continue  # pista prácticamente en silencio
+
+    def raw_notes(path: Path, kind: str, fmin: float, fmax: float) -> list[dict]:
         _, _, events = predict(
-            str(stems[stem]),
+            str(path),
             model,
             onset_threshold=0.6 if kind == "guitar" else 0.55,
             frame_threshold=0.3,
@@ -352,19 +512,37 @@ def transcribe_notes(stems: dict[str, Path], tempo: float = 120.0) -> list[dict]
             maximum_frequency=fmax,
             melodia_trick=True,
         )
-        notes = [
+        return [
             {"start": round(float(s), 4), "end": round(float(e), 4), "pitch": int(p), "velocity": float(a)}
             for s, e, p, a, _ in events
             if a > 0.25
         ]
-        if mono:
-            notes = monophonic(notes)
-        elif kind == "guitar":
-            notes = clean_chords(notes, max_notes=4)
+
+    tracks = []
+    wanted = [s for s in NOTE_RANGES if s in stems]
+    for i, stem in enumerate(wanted):
+        kind, program, fmin, fmax, mono = NOTE_RANGES[stem]
+        progress("notes", i / len(wanted), f"Transcribiendo {TRACK_NAMES[stem].lower()}…")
+        if rms(stems[stem]) < 0.004:
+            continue  # pista prácticamente en silencio
+        if kind == "guitar":
+            parts = guitar_parts(
+                stems[stem],
+                lambda path: raw_notes(path, kind, fmin, fmax),
+                guitars,
+                work or stems[stem].parent.parent,
+            )
         else:
-            notes = clean_chords(notes, max_notes=6)
-        if len(notes) >= 8:
-            tracks.append({"stem": stem, "kind": kind, "name": TRACK_NAMES[stem], "program": program, "notes": notes})
+            parts = [(stem, TRACK_NAMES[stem], raw_notes(stems[stem], kind, fmin, fmax))]
+        for ident, name, notes in parts:
+            if mono:
+                notes = monophonic(notes)
+            elif kind == "guitar":
+                notes = clean_chords(notes, max_notes=4)
+            else:
+                notes = clean_chords(notes, max_notes=6)
+            if len(notes) >= 8:
+                tracks.append({"stem": ident, "kind": kind, "name": name, "program": program, "notes": notes})
     progress("notes", 1, "Notas transcritas")
     return tracks
 
@@ -509,7 +687,7 @@ def command_transcribe(args: argparse.Namespace) -> None:
     audio = load_audio(source["path"])
     stems = separate(audio, work)
     rhythm = analyze_rhythm(audio, stems)
-    tracks = transcribe_notes(stems, rhythm["tempo"])
+    tracks = transcribe_notes(stems, rhythm["tempo"], args.guitars, work)
     drums = transcribe_drums(stems["drums"]) if "drums" in stems else []
     chords = detect_chords(stems, audio, rhythm["beats"])
     lyrics = {"language": None, "words": []}
@@ -549,6 +727,8 @@ def main() -> None:
     t.add_argument("--work", required=True)
     t.add_argument("--no-lyrics", dest="lyrics", action="store_false")
     t.add_argument("--whisper", default="small")
+    # Número de guitarras a escribir; sin indicar, se deduce del estéreo.
+    t.add_argument("--guitars", type=int, choices=(1, 2, 3), default=None)
     args = parser.parse_args()
     try:
         if args.command == "check":

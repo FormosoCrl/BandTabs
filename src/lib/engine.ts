@@ -28,8 +28,13 @@ export function installEngine(): Promise<void> {
   return invoke('engine_install');
 }
 
-export async function transcribe(source: string, lyrics: boolean): Promise<EngineResult> {
-  const json = await invoke<string>('engine_transcribe', { source, lyrics });
+/** `guitars`: cuántas guitarras escribir (1–3); `null` deja que el motor lo deduzca del estéreo. */
+export async function transcribe(
+  source: string,
+  lyrics: boolean,
+  guitars: number | null = null,
+): Promise<EngineResult> {
+  const json = await invoke<string>('engine_transcribe', { source, lyrics, guitars });
   return JSON.parse(json) as EngineResult;
 }
 

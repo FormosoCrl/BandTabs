@@ -173,6 +173,7 @@ pub async fn engine_transcribe(
   app: AppHandle,
   source: String,
   lyrics: bool,
+  guitars: Option<u8>,
 ) -> Result<String, String> {
   let dir = engine_dir(&app)?;
   let script = engine_source(&app)?.join("bandtabs_engine.py");
@@ -202,6 +203,9 @@ pub async fn engine_transcribe(
     .env("PYTHONIOENCODING", "utf-8");
   if !lyrics {
     command.arg("--no-lyrics");
+  }
+  if let Some(n) = guitars.filter(|n| (1..=3).contains(n)) {
+    command.arg("--guitars").arg(n.to_string());
   }
 
   let done = run_blocking(app, command).await?;
