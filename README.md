@@ -1,6 +1,6 @@
 # BandTabs
 
-Visor y reproductor de tablaturas para Windows, de código abierto. Abre archivos Guitar Pro,
+Visor y reproductor de tablaturas para Windows. Abre archivos Guitar Pro,
 MusicXML, MIDI y tabs en texto, los dibuja como tablatura o partitura y los reproduce con un
 cursor que sigue la música. También saca un borrador de tablatura a partir de un vídeo de YouTube,
 una canción de Spotify o un archivo de audio.
@@ -94,9 +94,15 @@ docs/ROADMAP.md               Plan por fases
 ## Créditos
 
 [alphaTab](https://alphatab.net) (MPL-2.0) dibuja y reproduce las partituras, con la fuente
-Bravura (SIL OFL) y el soundfont Sonivox. La app usa [Tauri](https://tauri.app),
-[React](https://react.dev) y [Dexie](https://dexie.org).
+Bravura (SIL OFL) y el soundfont Sonivox (Apache-2.0). La app usa [Tauri](https://tauri.app),
+[React](https://react.dev) y [Dexie](https://dexie.org). La lista completa de componentes de
+terceros y sus licencias está en [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Licencia
 
-[GPL-3.0 o posterior](LICENSE).
+BandTabs es software propietario. Copyright (c) 2026 Formoso. Todos los derechos reservados.
+Su uso se rige por la [licencia de uso](LICENSE): quien lo compra puede usarlo en sus equipos y,
+si recibe el código fuente, modificarlo para uso propio, pero no redistribuirlo.
+
+Las versiones 0.2.0 a 0.3.2 y el código publicado hasta la 0.4.0 salieron bajo GPL-3.0 o
+posterior; quien las recibió conserva esos derechos sobre esas versiones.
