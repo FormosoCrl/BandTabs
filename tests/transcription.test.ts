@@ -103,3 +103,40 @@ describe('transcriptionToAlphaTex', () => {
     expect(sheet.bars[1].segments.some((s) => s.text === 'mundo')).toBe(true);
   });
 });
+
+describe('afinación en la transcripción', () => {
+  const lowD: EngineResult = {
+    ...RESULT,
+    tracks: [
+      {
+        stem: 'guitar',
+        kind: 'guitar',
+        name: 'Guitarra',
+        program: 29,
+        notes: Array.from({ length: 8 }, (_, i) => ({
+          start: 0.5 + i * 0.5,
+          end: 0.9 + i * 0.5,
+          pitch: i % 2 ? 45 : 38,
+          velocity: 0.8,
+        })),
+      },
+    ],
+    chords: [],
+    lyrics: { language: null, words: [] },
+  };
+
+  it('propone Drop D si la guitarra baja hasta Re', () => {
+    const score = importer.ScoreLoader.loadAlphaTex(transcriptionToAlphaTex(lowD));
+    const staff = score.tracks[0].staves[0];
+    expect(staff.tuning).toEqual([64, 59, 55, 50, 45, 38]);
+    const first = staff.bars[0].voices[0].beats.find((b) => b.notes.length)!.notes[0];
+    expect(first.string).toBe(1);
+    expect(first.fret).toBe(0);
+  });
+
+  it('respeta la afinación elegida', () => {
+    const eb = [63, 58, 54, 49, 44, 39];
+    const score = importer.ScoreLoader.loadAlphaTex(transcriptionToAlphaTex(lowD, { guitar: eb }));
+    expect(score.tracks[0].staves[0].tuning).toEqual(eb);
+  });
+});

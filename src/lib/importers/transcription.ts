@@ -1,6 +1,7 @@
 import { pitchName, quote, tuningToTex } from './alphatex';
 import { assignFrets, STANDARD_BASS, STANDARD_GUITAR } from './frets';
 import { buildBars, type GridEvent } from './grid';
+import { suggestTuning, type TuningValues } from '../tunings';
 
 /** Lo que devuelve el motor de transcripción (bandtabs_engine.py). */
 export interface EngineResult {
@@ -94,7 +95,16 @@ function attach(events: GridEvent[], step: number, field: 'chord' | 'lyric', val
   events.push({ step, end: step + 1, body: null, [field]: value });
 }
 
-export function transcriptionToAlphaTex(result: EngineResult): string {
+/** Afinación elegida para guitarra y bajo; sin valor, se deduce de las notas. */
+export interface TranscriptionOptions {
+  guitar?: TuningValues | null;
+  bass?: TuningValues | null;
+}
+
+export function transcriptionToAlphaTex(
+  result: EngineResult,
+  options: TranscriptionOptions = {},
+): string {
   const toStep = makeTimeGrid(result.beats, result.downbeat, result.tempo);
   const barSteps = (result.beatsPerBar || 4) * 4;
   const lastStep = Math.max(1, toStep(result.duration));
@@ -114,7 +124,10 @@ export function transcriptionToAlphaTex(result: EngineResult): string {
     const header = [`\\track ${quote(track.name)} \\instrument ${track.program}`];
     let bodies: string[];
     if (track.kind === 'guitar' || track.kind === 'bass') {
-      const tuning = track.kind === 'bass' ? STANDARD_BASS : STANDARD_GUITAR;
+      const chosen = track.kind === 'bass' ? options.bass : options.guitar;
+      const tuning =
+        chosen ?? suggestTuning(track.notes.map((n) => n.pitch), track.kind) ??
+        (track.kind === 'bass' ? STANDARD_BASS : STANDARD_GUITAR);
       header.push(`\\staff {tabs} \\tuning ${tuningToTex(tuning)}`);
       bodies = assignFrets(
         onsets.map((o) => o.pitches),

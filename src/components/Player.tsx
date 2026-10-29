@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlphaTabApi, LayoutMode, PlayerMode, synth, type model } from '@coderline/alphatab';
+import {
+  AlphaTabApi,
+  LayoutMode,
+  NotationElement,
+  PlayerMode,
+  synth,
+  type model,
+} from '@coderline/alphatab';
 import type { Song } from '../lib/db';
 import { loadScore } from '../lib/importer';
 import { INSTRUMENT_LABELS } from '../lib/instruments';
@@ -7,6 +14,9 @@ import { concatFloat32, encodeWav, exportGuitarPro, exportMidi } from '../lib/ex
 import { safeFileName, saveFile } from '../lib/save';
 import { ChordSheetView } from './ChordSheetView';
 import { Icon } from './Icon';
+import { TuningSelect } from './TuningSelect';
+import { labelTabStrings } from '../lib/stringLabels';
+import { retuneStaff, tuningLabel, type TuningValues } from '../lib/tunings';
 
 interface Props {
   song: Song;
@@ -40,6 +50,34 @@ function applyView(score: model.Score, view: View) {
   }
 }
 
+/** Pentagramas de guitarra o bajo, que son los que se pueden reafinar. */
+function tunableKind(track: model.Track, kind: string | undefined): 'guitar' | 'bass' | null {
+  const staff = track.staves[0];
+  if (!staff?.isStringed || track.isPercussion || staff.tuning.length < 4) return null;
+  if (kind === 'bajo') return 'bass';
+  if (kind === 'guitarra') return 'guitar';
+  return staff.tuning.length <= 5 ? 'bass' : 'guitar';
+}
+
+// La afinación elegida se recuerda por canción y pista en este equipo.
+const tuningKey = (songId: number) => `bandtabs.tunings.${songId}`;
+
+function readTunings(songId: number): Record<number, TuningValues> {
+  try {
+    return JSON.parse(localStorage.getItem(tuningKey(songId)) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+function writeTunings(songId: number, value: Record<number, TuningValues>) {
+  try {
+    localStorage.setItem(tuningKey(songId), JSON.stringify(value));
+  } catch {
+    // Sin almacenamiento la afinación vale solo para esta sesión.
+  }
+}
+
 function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -53,12 +91,17 @@ export function Player({ song, data, onNotice }: Props) {
   const parsed = useMemo(() => {
     try {
       const loaded = loadScore(data, song.format);
+      const originals = loaded.tracks.map((t) => [...(t.staves[0]?.tuning ?? [])]);
+      for (const [index, values] of Object.entries(readTunings(song.id))) {
+        const staff = loaded.tracks[Number(index)]?.staves[0];
+        if (staff?.isStringed) retuneStaff(staff, values);
+      }
       applyView(loaded, 'tab');
-      return { score: loaded, error: null };
+      return { score: loaded, originals, error: null };
     } catch (e) {
-      return { score: null, error: e instanceof Error ? e.message : String(e) };
+      return { score: null, originals: [], error: e instanceof Error ? e.message : String(e) };
     }
-  }, [data, song.format]);
+  }, [data, song.format, song.id]);
   const score: model.Score | null = parsed.score;
   const [renderError, setRenderError] = useState<string | null>(null);
   const error = parsed.error ?? renderError;
@@ -79,6 +122,9 @@ export function Player({ song, data, onNotice }: Props) {
   const [metronome, setMetronome] = useState(false);
   const [pitch, setPitch] = useState(0);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [tunings, setTunings] = useState<TuningValues[]>(() =>
+    (parsed.score?.tracks ?? []).map((t) => [...(t.staves[0]?.tuning ?? [])]),
+  );
 
   // La instancia de alphaTab vive mientras el componente esté montado.
   useEffect(() => {
@@ -86,6 +132,8 @@ export function Player({ song, data, onNotice }: Props) {
       // Sin carga diferida para poder imprimir la canción entera.
       core: { fontDirectory: '/font/', enableLazyLoading: false },
       display: { layoutMode: LayoutMode.Page },
+      // La afinación va en letras junto a cada cuerda (labelTabStrings), no en la cabecera.
+      notation: { elements: new Map([[NotationElement.GuitarTuning, false]]) },
       player: {
         playerMode: PlayerMode.EnabledSynthesizer,
         soundFont: '/soundfont/sonivox.sf2',
@@ -96,7 +144,10 @@ export function Player({ song, data, onNotice }: Props) {
       },
     });
     api.renderStarted.on(() => setRendering(true));
-    api.renderFinished.on(() => setRendering(false));
+    api.renderFinished.on(() => {
+      setRendering(false);
+      labelTabStrings(hostRef.current!, api.tracks);
+    });
     api.playerReady.on(() => setPlayerReady(true));
     api.playerStateChanged.on((e) => setPlaying(e.state === synth.PlayerState.Playing));
     api.playerPositionChanged.on((e) => {
@@ -181,6 +232,24 @@ export function Player({ song, data, onNotice }: Props) {
     if (change.mute !== undefined) api.changeTrackMute(track, change.mute);
     if (change.solo !== undefined) api.changeTrackSolo(track, change.solo);
     setMixer((prev) => prev.map((ch, i) => (i === index ? { ...ch, ...change } : ch)));
+  };
+
+  const changeTuning = (index: number, values: TuningValues | null) => {
+    const api = apiRef.current;
+    const staff = score?.tracks[index]?.staves[0];
+    if (!api || !score || !staff || !values) return;
+    const raised = retuneStaff(staff, values);
+    setTunings((prev) => prev.map((t, i) => (i === index ? [...values] : t)));
+    const stored = readTunings(song.id);
+    if (values.join() === parsed.originals[index]?.join()) delete stored[index];
+    else stored[index] = values;
+    writeTunings(song.id, stored);
+    api.render();
+    onNotice(
+      raised
+        ? `Afinación cambiada a ${tuningLabel(values)}. ${raised} notas no caben y suben una octava.`
+        : `Afinación cambiada a ${tuningLabel(values)}. Suena igual; cambian cuerdas y trastes.`,
+    );
   };
 
   const clearRange = () => {
@@ -383,7 +452,11 @@ export function Player({ song, data, onNotice }: Props) {
                 <span>{song.tracks[i]?.name ?? track.name}</span>
                 <small>
                   {song.tracks[i] ? INSTRUMENT_LABELS[song.tracks[i].instrument] : ''}
-                  {song.tracks[i]?.tuning ? ` · ${song.tracks[i].tuning}` : ''}
+                  {tunings[i]?.length && tunableKind(track, song.tracks[i]?.instrument)
+                    ? ` · ${tuningLabel(tunings[i])}`
+                    : song.tracks[i]?.tuning
+                      ? ` · ${song.tracks[i].tuning}`
+                      : ''}
                 </small>
               </button>
               <div className="mixer">
@@ -413,6 +486,15 @@ export function Player({ song, data, onNotice }: Props) {
                   aria-label={`Volumen de ${track.name}`}
                 />
               </div>
+              {tunableKind(track, song.tracks[i]?.instrument) && (
+                <TuningSelect
+                  kind={tunableKind(track, song.tracks[i]?.instrument)!}
+                  value={tunings[i]}
+                  original={parsed.originals[i]}
+                  onChange={(values) => changeTuning(i, values)}
+                  label={`Afinación de ${track.name}`}
+                />
+              )}
             </div>
           ))}
         </aside>

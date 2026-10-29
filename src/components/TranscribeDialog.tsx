@@ -12,6 +12,8 @@ import {
 } from '../lib/engine';
 import { transcriptionToAlphaTex } from '../lib/importers/transcription';
 import { Icon } from './Icon';
+import { TuningSelect } from './TuningSelect';
+import type { TuningValues } from '../lib/tunings';
 
 interface Props {
   onClose: () => void;
@@ -37,6 +39,8 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [source, setSource] = useState('');
   const [lyrics, setLyrics] = useState(true);
+  const [guitarTuning, setGuitarTuning] = useState<TuningValues | null>(null);
+  const [bassTuning, setBassTuning] = useState<TuningValues | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('');
@@ -93,7 +97,7 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
       setProgress(0);
       setMessage('Empezando…');
       const result = await transcribe(source.trim(), lyrics);
-      const tex = transcriptionToAlphaTex(result);
+      const tex = transcriptionToAlphaTex(result, { guitar: guitarTuning, bass: bassTuning });
       await onImport(`${result.title}.atex`, new TextEncoder().encode(tex));
       onClose();
     } catch (e) {
@@ -168,6 +172,28 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
               <input type="checkbox" checked={lyrics} onChange={(e) => setLyrics(e.target.checked)} />
               Sacar también la letra
             </label>
+            <div className="tuning-row">
+              <label className="field">
+                Afinación de la guitarra
+                <TuningSelect
+                  kind="guitar"
+                  value={guitarTuning}
+                  onChange={setGuitarTuning}
+                  allowAuto
+                  label="Afinación de la guitarra"
+                />
+              </label>
+              <label className="field">
+                Afinación del bajo
+                <TuningSelect
+                  kind="bass"
+                  value={bassTuning}
+                  onChange={setBassTuning}
+                  allowAuto
+                  label="Afinación del bajo"
+                />
+              </label>
+            </div>
 
             <p className="note">
               Se separan los instrumentos y se escriben guitarra, bajo, piano, voz y batería, con los

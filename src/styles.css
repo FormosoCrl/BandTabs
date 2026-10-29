@@ -933,3 +933,24 @@ input {
   background: var(--fg);
   transition: width 300ms linear;
 }
+
+/* Afinación */
+.tuning-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.track .tuning-select {
+  padding: 2px 12px 0;
+}
+
+.track .tuning-select select {
+  width: 100%;
+}
+
+.tuning-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
