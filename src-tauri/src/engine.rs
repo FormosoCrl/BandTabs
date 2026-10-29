@@ -28,12 +28,25 @@ pub struct EngineStatus {
   dir: String,
 }
 
+/// En Windows, Tauri puede dar rutas con el prefijo `\\?\` (p. ej. `\\?\C:\Users\…`), que
+/// PowerShell no entiende: Join-Path falla con "el valor del argumento drive es NULL".
+fn plain(path: PathBuf) -> PathBuf {
+  let text = path.to_string_lossy();
+  if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+    return PathBuf::from(format!(r"\\{rest}"));
+  }
+  match text.strip_prefix(r"\\?\") {
+    Some(rest) => PathBuf::from(rest),
+    None => path,
+  }
+}
+
 fn engine_dir(app: &AppHandle) -> Result<PathBuf, String> {
-  Ok(app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("engine"))
+  Ok(plain(app.path().app_local_data_dir().map_err(|e| e.to_string())?).join("engine"))
 }
 
 fn engine_source(app: &AppHandle) -> Result<PathBuf, String> {
-  Ok(app.path().resource_dir().map_err(|e| e.to_string())?.join("engine"))
+  Ok(plain(app.path().resource_dir().map_err(|e| e.to_string())?).join("engine"))
 }
 
 fn python_exe(dir: &Path) -> PathBuf {
@@ -93,7 +106,9 @@ fn run_streaming(app: &AppHandle, mut command: Command) -> Result<String, String
   for line in BufReader::new(stdout).lines() {
     let Ok(line) = line else { break };
     let line = line.trim().to_string();
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+      continue;
+    };
     match value.get("type").and_then(|t| t.as_str()) {
       Some("done") => done = Some(line.clone()),
       Some("error") => {
@@ -162,10 +177,7 @@ pub async fn engine_transcribe(
   let dir = engine_dir(&app)?;
   let script = engine_source(&app)?.join("bandtabs_engine.py");
   let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-  let work = app
-    .path()
-    .app_local_data_dir()
-    .map_err(|e| e.to_string())?
+  let work = plain(app.path().app_local_data_dir().map_err(|e| e.to_string())?)
     .join("transcriptions")
     .join(stamp.to_string());
 
@@ -205,4 +217,20 @@ pub fn engine_cancel(state: State<'_, EngineState>) -> Result<(), String> {
     child.kill().map_err(|e| e.to_string())?;
   }
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::plain;
+  use std::path::PathBuf;
+
+  #[test]
+  fn quita_el_prefijo_de_ruta_larga() {
+    assert_eq!(
+      plain(PathBuf::from(r"\\?\C:\Program Files\BandTabs")),
+      PathBuf::from(r"C:\Program Files\BandTabs")
+    );
+    assert_eq!(plain(PathBuf::from(r"\\?\UNC\server\share")), PathBuf::from(r"\\server\share"));
+    assert_eq!(plain(PathBuf::from(r"C:\x")), PathBuf::from(r"C:\x"));
+  }
 }

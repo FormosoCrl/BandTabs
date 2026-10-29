@@ -8,6 +8,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Las rutas largas de Windows (\\?\C:\...) rompen Join-Path en Windows PowerShell.
+$Dir = $Dir -replace '^\\\\\?\\', ''
+$EngineSource = $EngineSource -replace '^\\\\\?\\', ''
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 

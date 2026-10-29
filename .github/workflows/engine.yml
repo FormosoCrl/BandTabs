@@ -30,7 +30,7 @@ jobs:
         run: Add-Content $env:GITHUB_ENV "ENGINE_DIR=$env:RUNNER_TEMP\engine"
       - name: Instalar el motor como lo hace la app
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri\engine\install.ps1 -Dir "$env:ENGINE_DIR" -EngineSource src-tauri\engine
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri\engine\install.ps1 -Dir "\\?\$env:ENGINE_DIR" -EngineSource "\\?\$PWD\src-tauri\engine"
       - name: Analizar una canción sintética
         shell: pwsh
         run: |
