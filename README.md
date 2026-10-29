@@ -44,7 +44,9 @@ app. Las siguientes veces la abre directamente.
 Para generar tú mismo el instalador: `npm run app:build`. Queda en
 `src-tauri\target\release\bundle\nsis\`.
 
-Cada vez que se sube una etiqueta `vX.Y.Z` a GitHub, la acción **Release** compila el instalador
+Para publicar una versión nueva: en GitHub, **Actions → Release → Run workflow**, escribe la
+versión (p. ej. `0.3.0`) y espera unos 15 minutos. También vale subir una etiqueta `vX.Y.Z`. La
+acción compila el instalador
 y lo publica en Releases.
 
 Para trabajar solo en la interfaz, en el navegador: `npm run dev` y abre <http://localhost:1420>.
