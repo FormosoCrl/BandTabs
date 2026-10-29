@@ -1,11 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "Permisos de la ventana principal: guardar archivos exportados donde elija el usuario",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-save",
+    "fs:allow-write-file"
   ]
 }

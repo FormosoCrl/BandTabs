@@ -530,3 +530,271 @@ input {
   z-index: 11;
   cursor: pointer;
 }
+
+.top-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Barra de práctica */
+.practice-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.practice-bar label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.practice-bar .hint {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.toggle {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.toggle.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.score-area {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.score-area > .score-viewport {
+  flex: 1;
+}
+
+.score-viewport[hidden] {
+  display: none;
+}
+
+/* Acordes y letra */
+.chord-sheet {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 32px;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.empty-sheet {
+  color: var(--muted);
+}
+
+.chord-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+
+.chord {
+  color: var(--accent);
+  font-weight: 700;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.sheet-line {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.sheet-bar {
+  display: inline-flex;
+  padding-right: 14px;
+  margin-right: 14px;
+  border-right: 1px solid var(--line);
+}
+
+.sheet-seg {
+  display: inline-flex;
+  flex-direction: column;
+  padding-right: 6px;
+  white-space: pre;
+}
+
+/* Modales y afinador */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+}
+
+.modal {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 18px 22px;
+  width: min(440px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.modal header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.tuner-note {
+  font-size: 4rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1;
+}
+
+.tuner-note sub {
+  font-size: 1.5rem;
+  color: var(--muted);
+}
+
+.tuner-note.in-tune {
+  color: #15803d;
+}
+
+.tuner-meter {
+  position: relative;
+  height: 28px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, var(--accent-soft), var(--bg) 45%, var(--bg) 55%, var(--accent-soft));
+  border: 1px solid var(--line);
+}
+
+.tuner-center {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  background: #15803d;
+}
+
+.tuner-needle {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: left 80ms linear;
+}
+
+.tuner-info {
+  text-align: center;
+  color: var(--muted);
+  margin: 0;
+}
+
+.tuner-strings {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.tuner-strings .string {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.tuner-strings .string.active {
+  border-color: #15803d;
+  color: #15803d;
+  font-weight: 700;
+}
+
+.tuner-options {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.tuner-options label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.tuner-options input {
+  width: 70px;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+/* Impresión: solo la partitura (o la hoja de acordes), sin la interfaz. */
+@media print {
+  .library,
+  .player-header,
+  .practice-bar,
+  .tracks,
+  .toast,
+  .at-cursor-bar,
+  .at-cursor-beat,
+  .at-selection,
+  .loading {
+    display: none !important;
+  }
+
+  .app,
+  .player-body {
+    display: block;
+    height: auto;
+  }
+
+  .player,
+  .score-area,
+  .score-viewport,
+  .chord-sheet {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  .view-chords .score-viewport {
+    display: none;
+  }
+
+  body {
+    background: #fff;
+    color: #000;
+  }
+}

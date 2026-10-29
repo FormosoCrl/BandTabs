@@ -11,10 +11,18 @@ interface Props {
   activeSongId: number | null;
   onOpen: (id: number) => void;
   onImportClick: () => void;
+  onTunerClick: () => void;
   onRemoved: (id: number) => void;
 }
 
-export function LibraryPanel({ library, activeSongId, onOpen, onImportClick, onRemoved }: Props) {
+export function LibraryPanel({
+  library,
+  activeSongId,
+  onOpen,
+  onImportClick,
+  onTunerClick,
+  onRemoved,
+}: Props) {
   const [section, setSection] = useState<Section>('all');
   const [playlistId, setPlaylistId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
@@ -60,9 +68,14 @@ export function LibraryPanel({ library, activeSongId, onOpen, onImportClick, onR
           </span>
           BandTabs
         </div>
-        <button className="btn primary" onClick={onImportClick}>
-          + Importar
-        </button>
+        <div className="top-actions">
+          <button className="btn" onClick={onTunerClick} title="Afinador">
+            Afinador
+          </button>
+          <button className="btn primary" onClick={onImportClick}>
+            + Importar
+          </button>
+        </div>
       </div>
 
       <nav className="sections" aria-label="Secciones">

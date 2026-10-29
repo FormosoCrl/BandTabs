@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Player } from './components/Player';
 import { LibraryPanel } from './components/LibraryPanel';
+import { Tuner } from './components/Tuner';
 import { db, type Song } from './lib/db';
 import { Library, type ImportResult } from './lib/library';
 import { ACCEPTED_EXTENSIONS } from './lib/formats';
@@ -39,6 +40,7 @@ export function App() {
   const [current, setCurrent] = useState<OpenSong | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [tunerOpen, setTunerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const open = useCallback(
@@ -110,13 +112,19 @@ export function App() {
         activeSongId={current?.song.id ?? null}
         onOpen={open}
         onImportClick={() => fileInputRef.current?.click()}
+        onTunerClick={() => setTunerOpen(true)}
         onRemoved={(id) => {
           if (current?.song.id === id) setCurrent(null);
         }}
       />
       <main className="main">
         {current ? (
-          <Player key={current.song.id} song={current.song} data={current.data} />
+          <Player
+            key={current.song.id}
+            song={current.song}
+            data={current.data}
+            onNotice={setNotice}
+          />
         ) : (
           <div className="welcome">
             <h1>Tus tablaturas, sin muros de pago</h1>
@@ -150,6 +158,7 @@ export function App() {
         }}
       />
 
+      {tunerOpen && <Tuner onClose={() => setTunerOpen(false)} />}
       {dragging && (
         <div className="drop-overlay">
           <div>Suelta los archivos para añadirlos a tu biblioteca</div>

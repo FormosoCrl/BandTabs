@@ -3,10 +3,14 @@ import { AlphaTabApi, LayoutMode, PlayerMode, synth, type model } from '@coderli
 import type { Song } from '../lib/db';
 import { loadScore } from '../lib/importer';
 import { INSTRUMENT_LABELS } from '../lib/instruments';
+import { concatFloat32, encodeWav, exportGuitarPro, exportMidi } from '../lib/export';
+import { safeFileName, saveFile } from '../lib/save';
+import { ChordSheetView } from './ChordSheetView';
 
 interface Props {
   song: Song;
   data: Uint8Array;
+  onNotice: (message: string) => void;
 }
 
 interface MixerChannel {
@@ -15,7 +19,9 @@ interface MixerChannel {
   solo: boolean;
 }
 
-type View = 'tab' | 'tab-score' | 'score';
+type View = 'tab' | 'tab-score' | 'score' | 'chords';
+
+const SPEEDS = [0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5];
 
 /**
  * El perfil de pentagrama de alphaTab solo puede ocultar lo que el archivo muestra, así que la
@@ -23,6 +29,7 @@ type View = 'tab' | 'tab-score' | 'score';
  * siempre en partitura.
  */
 function applyView(score: model.Score, view: View) {
+  if (view === 'chords') return;
   for (const track of score.tracks) {
     for (const staff of track.staves) {
       if (!staff.isStringed || track.isPercussion) continue;
@@ -37,7 +44,7 @@ function formatTime(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-export function Player({ song, data }: Props) {
+export function Player({ song, data, onNotice }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<AlphaTabApi | null>(null);
@@ -64,11 +71,19 @@ export function Player({ song, data }: Props) {
   );
   const [view, setView] = useState<View>('tab');
   const [zoom, setZoom] = useState(1);
+  const [speed, setSpeed] = useState(1);
+  const [loop, setLoop] = useState(false);
+  const [hasRange, setHasRange] = useState(false);
+  const [countIn, setCountIn] = useState(false);
+  const [metronome, setMetronome] = useState(false);
+  const [pitch, setPitch] = useState(0);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   // La instancia de alphaTab vive mientras el componente esté montado.
   useEffect(() => {
     const api = new AlphaTabApi(hostRef.current!, {
-      core: { fontDirectory: '/font/' },
+      // Sin carga diferida para poder imprimir la canción entera.
+      core: { fontDirectory: '/font/', enableLazyLoading: false },
       display: { layoutMode: LayoutMode.Page },
       player: {
         playerMode: PlayerMode.EnabledSynthesizer,
@@ -92,6 +107,7 @@ export function Player({ song, data }: Props) {
           : { current, end: e.endTime };
       });
     });
+    api.playbackRangeChanged.on((e) => setHasRange(e.playbackRange != null));
     api.error.on((e) => setRenderError(e.message));
     apiRef.current = api;
     return () => {
@@ -104,12 +120,31 @@ export function Player({ song, data }: Props) {
     if (score) apiRef.current?.renderScore(score, [0]);
   }, [score]);
 
+  // Ajustes de práctica: se vuelven a aplicar cuando el reproductor termina de cargar.
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    api.playbackSpeed = speed;
+    api.isLooping = loop;
+    api.countInVolume = countIn ? 1 : 0;
+    api.metronomeVolume = metronome ? 1 : 0;
+  }, [speed, loop, countIn, metronome, playerReady]);
+
+  useEffect(() => {
+    const api = apiRef.current;
+    if (api && score) api.changeTrackTranspositionPitch(score.tracks, pitch);
+  }, [pitch, score, playerReady]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (e.code !== 'Space' || target.closest('input, select, textarea, button')) return;
-      e.preventDefault();
-      apiRef.current?.playPause();
+      if (target.closest('input, select, textarea')) return;
+      if (e.code === 'Space' && !target.closest('button')) {
+        e.preventDefault();
+        apiRef.current?.playPause();
+      } else if (e.key === 'l' || e.key === 'L') {
+        setLoop((l) => !l);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -119,7 +154,7 @@ export function Player({ song, data }: Props) {
   const viewInitialized = useRef(false);
   useEffect(() => {
     const api = apiRef.current;
-    if (!api || !score) return;
+    if (!api || !score || view === 'chords') return;
     if (!viewInitialized.current) {
       viewInitialized.current = true;
       return;
@@ -147,8 +182,72 @@ export function Player({ song, data }: Props) {
     setMixer((prev) => prev.map((ch, i) => (i === index ? { ...ch, ...change } : ch)));
   };
 
+  const clearRange = () => {
+    const api = apiRef.current;
+    if (!api) return;
+    api.playbackRange = null;
+    api.clearPlaybackRangeHighlight();
+    setHasRange(false);
+  };
+
+  const exportAudio = async (): Promise<Uint8Array> => {
+    const api = apiRef.current!;
+    const options = new synth.AudioExportOptions();
+    options.sampleRate = 44100;
+    options.masterVolume = 1;
+    options.metronomeVolume = 0;
+    score!.tracks.forEach((t, i) => {
+      const ch = mixer[i];
+      const anySolo = mixer.some((m) => m.solo);
+      const audible = !ch?.mute && (!anySolo || ch?.solo);
+      options.trackVolume.set(t.index, audible ? (ch?.volume ?? 1) : 0);
+      if (pitch) options.trackTranspositionPitches.set(t.index, pitch);
+    });
+    const exporter = await api.exportAudio(options);
+    const chunks: Float32Array[] = [];
+    try {
+      for (;;) {
+        const chunk = await exporter.render(2000);
+        if (!chunk) break;
+        chunks.push(chunk.samples);
+        setExporting(`Exportando audio… ${Math.round((chunk.currentTime / chunk.endTime) * 100)} %`);
+      }
+    } finally {
+      exporter.destroy();
+    }
+    return encodeWav(concatFloat32(chunks), options.sampleRate);
+  };
+
+  const runExport = async (kind: string) => {
+    if (!score) return;
+    const base = safeFileName(song.title);
+    try {
+      if (kind === 'print') {
+        window.print();
+        return;
+      }
+      setExporting('Exportando…');
+      let saved = false;
+      if (kind === 'gp') {
+        saved = await saveFile(`${base}.gp`, exportGuitarPro(score), {
+          name: 'Guitar Pro',
+          extensions: ['gp'],
+        });
+      } else if (kind === 'midi') {
+        saved = await saveFile(`${base}.mid`, exportMidi(score), { name: 'MIDI', extensions: ['mid'] });
+      } else if (kind === 'wav') {
+        saved = await saveFile(`${base}.wav`, await exportAudio(), { name: 'WAV', extensions: ['wav'] });
+      }
+      if (saved) onNotice('Archivo exportado.');
+    } catch (e) {
+      onNotice(`No se pudo exportar: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   return (
-    <div className="player">
+    <div className={`player view-${view}`}>
       <header className="player-header">
         <div className="player-title">
           <h1>{song.title}</h1>
@@ -180,6 +279,7 @@ export function Player({ song, data }: Props) {
               <option value="tab">Tablatura</option>
               <option value="tab-score">Tablatura y partitura</option>
               <option value="score">Partitura</option>
+              <option value="chords">Acordes y letra</option>
             </select>
           </label>
           <label>
@@ -192,8 +292,73 @@ export function Player({ song, data }: Props) {
               ))}
             </select>
           </label>
+          <select
+            value=""
+            onChange={(e) => void runExport(e.target.value)}
+            disabled={!score || exporting != null}
+            aria-label="Exportar o imprimir"
+          >
+            <option value="">{exporting ?? 'Exportar…'}</option>
+            <option value="gp">Guitar Pro (.gp)</option>
+            <option value="midi">MIDI (.mid)</option>
+            <option value="wav">Audio (.wav)</option>
+            <option value="print">Imprimir…</option>
+          </select>
         </div>
       </header>
+
+      <div className="practice-bar" aria-label="Práctica">
+        <label title="Cambia la velocidad sin cambiar el tono">
+          Velocidad
+          <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
+            {SPEEDS.map((s) => (
+              <option key={s} value={s}>
+                {Math.round(s * 100)} %
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className={`toggle ${loop ? 'on' : ''}`}
+          onClick={() => setLoop((l) => !l)}
+          aria-pressed={loop}
+          title="Repite la selección o, si no hay, la canción entera (tecla L)"
+        >
+          ⟲ Repetir
+        </button>
+        {hasRange ? (
+          <button className="link" onClick={clearRange}>
+            Quitar selección
+          </button>
+        ) : (
+          <span className="hint">Arrastra sobre la partitura para elegir compases</span>
+        )}
+        <button
+          className={`toggle ${countIn ? 'on' : ''}`}
+          onClick={() => setCountIn((c) => !c)}
+          aria-pressed={countIn}
+          title="Un compás de claqueta antes de empezar"
+        >
+          Cuenta atrás
+        </button>
+        <button
+          className={`toggle ${metronome ? 'on' : ''}`}
+          onClick={() => setMetronome((m) => !m)}
+          aria-pressed={metronome}
+        >
+          Metrónomo
+        </button>
+        <label title="Sube o baja el tono del sonido, por ejemplo para tocar con otra afinación">
+          Tono
+          <select value={pitch} onChange={(e) => setPitch(Number(e.target.value))}>
+            {Array.from({ length: 25 }, (_, i) => i - 12).map((p) => (
+              <option key={p} value={p}>
+                {p > 0 ? `+${p}` : p === 0 ? 'Original' : p}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       <div className="player-body">
         <aside className="tracks" aria-label="Pistas">
@@ -250,10 +415,14 @@ export function Player({ song, data }: Props) {
           ))}
         </aside>
 
-        <div className="score-viewport" ref={viewportRef}>
-          {error && <div className="error">No se pudo abrir el archivo: {error}</div>}
-          {rendering && !error && <div className="loading">Dibujando tablatura…</div>}
-          <div ref={hostRef} className="score-host" />
+        <div className="score-area">
+          {view === 'chords' && score && <ChordSheetView score={score} />}
+          {/* alphaTab sigue montado en la vista de acordes para que la reproducción continúe. */}
+          <div className="score-viewport" ref={viewportRef} hidden={view === 'chords'}>
+            {error && <div className="error">No se pudo abrir el archivo: {error}</div>}
+            {rendering && !error && <div className="loading">Dibujando tablatura…</div>}
+            <div ref={hostRef} className="score-host" />
+          </div>
         </div>
       </div>
     </div>
