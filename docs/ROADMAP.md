@@ -3,7 +3,7 @@
 > Estado: **aprobado**. Fases 0, 1, 2 y la primera parte de la 4 implementadas (octubre de 2026).
 > Alcance actual: **solo app de PC**. Móvil y otras plataformas, más adelante.
 
-BandTabs es una alternativa open source a Songsterr. El objetivo es cubrir tres cosas:
+BandTabs es una alternativa a Songsterr. El objetivo es cubrir tres cosas:
 
 1. **Importar** tablaturas ya hechas y practicar con ellas.
 2. **Transcribir** una canción desde un enlace de YouTube o Spotify (o un audio propio) a tabs de todos los instrumentos y de la canción completa.
@@ -21,7 +21,7 @@ BandTabs es una alternativa open source a Songsterr. El objetivo es cubrir tres 
 | Almacenamiento | IndexedDB en el navegador (con Dexie). Tus archivos no salen de tu equipo |
 | Transcripción | Python propio que la app instala sola la primera vez y ejecuta en tu PC, sin Docker |
 | Otras plataformas | macOS y Linux salen casi gratis con Tauri. Android e iOS con Tauri Mobile, en una fase posterior |
-| Licencia | GPL‑3.0 o posterior (protege que los forks sigan siendo abiertos). Se puede cambiar mientras no haya contribuciones externas |
+| Licencia | Propietaria desde el 29/10/2026 (ver LICENSE). Hasta la 0.4.0 fue GPL‑3.0 o posterior |
 
 Orden de trabajo: **Importar → Practicar (paridad Plus) → Exportar → Audio real sincronizado → Transcripción IA → Editor → Otras plataformas**. Lo explico en la sección 6.
 
@@ -173,7 +173,7 @@ Los importadores nuevos (MIDI, ASCII, ChordPro) irán en `src/lib/importers/`. S
 Cada fase termina con algo usable.
 
 ### Fase 0: Fundaciones ✅
-- Git, licencia GPL‑3.0, README.
+- Git, licencia (GPL‑3.0 al principio; propietaria desde la 0.4), README.
 - Tauri 2 + Vite + React + TypeScript, ESLint, Vitest.
 - CI en GitHub Actions (lint, tipos, tests, build web y compilación de la app en Windows).
 

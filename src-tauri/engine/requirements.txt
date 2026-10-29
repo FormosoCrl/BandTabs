@@ -12,6 +12,14 @@ mir-eval==0.8.2
 setuptools<81
 soundfile==0.13.1
 faster-whisper==1.2.1
-yt-dlp[default]
+# yt-dlp con sus extras de [default] menos mutagen (GPL; solo sirve para incrustar carátulas).
+yt-dlp
+yt-dlp-ejs
+brotli
+certifi
+pycryptodomex
+requests
+urllib3
+websockets
 deno
 imageio-ffmpeg==0.6.0
