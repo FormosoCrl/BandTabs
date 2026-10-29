@@ -238,6 +238,16 @@ def analyze_rhythm(audio, stems: dict[str, Path] | None) -> dict:
     beats = librosa.frames_to_time(beat_frames, sr=22050)
     tempo = float(np.atleast_1d(tempo)[0])
 
+    # librosa tiende a contar corcheas como tiempos (un 100 sale 200). Por encima de 160 se toma
+    # uno de cada dos tiempos, el que más coincide con golpes fuertes.
+    if tempo > 160 and len(beat_frames) >= 16:
+        envelope = librosa.onset.onset_strength(y=mono, sr=22050)
+        strength = envelope[np.minimum(beat_frames, len(envelope) - 1)]
+        offset = int(np.argmax([strength[0::2].mean(), strength[1::2].mean()]))
+        beat_frames = beat_frames[offset::2]
+        beats = beats[offset::2]
+        tempo /= 2
+
     # El primer tiempo de cada compás suele coincidir con el bombo y el bajo.
     if stems and "drums" in stems and len(beat_frames) >= 8:
         low, _ = librosa.load(stems["drums"], sr=22050, mono=True)
