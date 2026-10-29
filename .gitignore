@@ -5,3 +5,5 @@ public/font/
 public/soundfont/
 *.log
 .DS_Store
+__pycache__/
+.pytest_cache/

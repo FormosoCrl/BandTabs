@@ -1,6 +1,6 @@
 [package]
 name = "bandtabs"
-version = "0.3.1"
+version = "0.3.2"
 description = "Visor y reproductor de tablaturas open source"
 authors = ["BandTabs contributors"]
 license = "GPL-3.0-or-later"

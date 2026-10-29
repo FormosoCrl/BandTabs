@@ -418,9 +418,14 @@ def transcribe_lyrics(path: Path, model_size: str) -> dict:
     from faster_whisper import WhisperModel
 
     progress("lyrics", 0, "Preparando el reconocimiento de letra (la primera vez se descarga)…")
+    import librosa
+
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    # Se le pasa el audio ya decodificado: el lector de faster-whisper usa PyAV con opciones que
+    # las versiones nuevas de PyAV ya no aceptan ("metadata_errors").
+    samples, _ = librosa.load(path, sr=16000, mono=True)
     segments, info = model.transcribe(
-        str(path), word_timestamps=True, vad_filter=True, condition_on_previous_text=False
+        samples, word_timestamps=True, vad_filter=True, condition_on_previous_text=False
     )
     duration = max(1.0, float(info.duration))
     words = []
@@ -459,7 +464,12 @@ def command_transcribe(args: argparse.Namespace) -> None:
     chords = detect_chords(stems, audio, rhythm["beats"])
     lyrics = {"language": None, "words": []}
     if args.lyrics and "vocals" in stems and rms(stems["vocals"]) > 0.01:
-        lyrics = transcribe_lyrics(stems["vocals"], args.whisper)
+        try:
+            lyrics = transcribe_lyrics(stems["vocals"], args.whisper)
+        except Exception as error:  # noqa: BLE001
+            # Sin letra la transcripción sigue valiendo; no se tira todo el trabajo por esto.
+            print(f"No se pudo sacar la letra: {error!r}", file=sys.stderr)
+            progress("lyrics", 1, "No se pudo sacar la letra")
     else:
         progress("lyrics", 1, "Sin letra")
     result = {

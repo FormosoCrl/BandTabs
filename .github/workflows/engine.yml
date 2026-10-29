@@ -41,6 +41,13 @@ jobs:
           & $py src-tauri\engine\tests\make_test_song.py "$env:RUNNER_TEMP\song.wav"
           & $py src-tauri\engine\bandtabs_engine.py transcribe --source "$env:RUNNER_TEMP\song.wav" --work "$env:RUNNER_TEMP\work" --whisper tiny
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Reconocer letra con Whisper
+        shell: pwsh
+        run: |
+          $py = "$env:ENGINE_DIR\python\python.exe"
+          $env:HF_HOME = "$env:ENGINE_DIR\models\huggingface"
+          & $py -c "import sys, pathlib; sys.path.insert(0, 'src-tauri/engine'); import bandtabs_engine as e; print(e.transcribe_lyrics(pathlib.Path(r'$env:RUNNER_TEMP\song.wav'), 'tiny'))"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Descargar de YouTube (informativo)
         continue-on-error: true
         shell: pwsh
