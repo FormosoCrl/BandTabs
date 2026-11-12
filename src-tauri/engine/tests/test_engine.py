@@ -187,9 +187,8 @@ def test_merge_takes_recuerda_donde_sale_cada_nota():
 
 
 def test_group_by_side_distingue_dos_guitarras_de_una_doblada():
-    doubled = engine.group_by_side({"left": RIFF, "right": [dict(n) for n in RIFF[:-2]]})
-    assert set(doubled) == {"center"}
-    assert len(doubled["center"]) == len(RIFF)
+    # La misma parte en las dos escuchas: no hay nada que repartir.
+    assert engine.group_by_side({"left": RIFF, "right": [dict(n) for n in RIFF[:-2]]}) is None
 
     two = engine.group_by_side({"left": RIFF, "right": LEAD})
     assert [n["pitch"] for n in two["left"]] == [n["pitch"] for n in RIFF]
@@ -217,6 +216,92 @@ def test_guitar_parts_nombra_las_guitarras_por_su_lado(tmp_path):
     # Si se pide una sola, no se reparte nada.
     parts = _guitar_parts(tmp_path, ["left", "right"], notes_for, 1)
     assert [(name, len(notes)) for _, name, notes in parts] == [("Guitarra", len(RIFF + LEAD))]
+
+
+def test_guitar_parts_no_repite_las_notas_de_una_guitarra_doblada(tmp_path):
+    # La misma parte grabada dos veces: la segunda toma va 40 ms tarde. Juntar las dos escuchas
+    # repetiría notas; se usa la transcripción de la pista entera.
+    late = [{**n, "start": n["start"] + 0.04, "end": n["end"] + 0.04} for n in RIFF]
+    notes_for = {"left": RIFF, "right": late, "guitar": RIFF}
+    parts = _guitar_parts(tmp_path, ["left", "right"], notes_for, None)
+    assert [(name, notes) for _, name, notes in parts] == [("Guitarra", RIFF)]
+
+
+def test_stereo_views_da_cada_canal_si_es_la_misma_parte_grabada_dos_veces(tmp_path):
+    # Dos tomas de las mismas notas, una en cada canal, con la afinación un pelo distinta: no hay
+    # picos a los lados (todo suena igual de fuerte en los dos canales) pero los canales no se
+    # parecen entre sí.
+    sr = 44100
+    t = np.arange(3 * sr) / sr
+    left = sum(np.sin(2 * np.pi * f * t) for f in (220.0, 277.2, 329.6)) * 0.2
+    right = sum(np.sin(2 * np.pi * f * 1.004 * t + 1.0) for f in (220.0, 277.2, 329.6)) * 0.2
+    _stereo(tmp_path / "guitar.wav", left, right)
+    views = engine.stereo_views(tmp_path / "guitar.wav", tmp_path)
+    assert set(views) == {"left", "right"}
+    for side, channel in (("left", left), ("right", right)):
+        y, rate = sf.read(views[side], dtype="float32")
+        size = min(len(y), len(channel[::2]))
+        assert np.corrcoef(y[1000 : size - 1000], channel[::2][1000 : size - 1000])[0, 1] > 0.98
+
+
+def _activations(frames=120, step=0.0116):
+    return np.zeros((frames, 88)), np.zeros((frames, 88)), np.arange(frames) * step
+
+
+def test_restrike_corta_el_acorde_en_cada_golpe_de_un_rasgueo():
+    onset, frame, times = _activations()
+    chord = [{"start": 0.1, "end": 1.2, "pitch": p, "velocity": 0.6} for p in (50, 57, 62)]
+    for p in (50, 57, 62):
+        frame[8:105, p - 21] = 0.5
+        # Tres golpes más después del primero, marcados flojo en cada cuerda.
+        for f in (30, 52, 74):
+            onset[f - 1 : f + 2, p - 21] = (0.2, 0.35, 0.2)
+    out = engine.restrike(chord, onset, frame, times, 40, 88, 0.05)
+    assert len(out) == 12
+    starts = sorted({n["start"] for n in out})
+    assert np.allclose(starts, [0.1, times[30], times[52], times[74]], atol=0.02)
+    # Cada trozo acaba donde empieza el siguiente.
+    for p in (50, 57, 62):
+        own = sorted((n for n in out if n["pitch"] == p), key=lambda n: n["start"])
+        assert all(a["end"] == b["start"] for a, b in zip(own, own[1:]))
+    assert chord[0]["end"] == 1.2  # no cambia la lista original
+
+
+def test_restrike_no_parte_una_nota_suelta_ni_la_cola_de_una_que_se_apaga():
+    # Una sola nota larga con un ataque flojo en medio: sin otra cuerda que lo confirme, se deja.
+    onset, frame, times = _activations()
+    frame[8:105, 60 - 21] = 0.5
+    onset[49:52, 60 - 21] = (0.2, 0.4, 0.2)
+    onset[49:52, 72 - 21] = (0.5, 0.9, 0.5)  # otra nota que empieza ahí, pero que no venía sonando
+    single = [{"start": 0.1, "end": 1.2, "pitch": 60, "velocity": 0.6}]
+    assert engine.restrike(single, onset, frame, times, 40, 88, 0.05) == single
+
+    # Dos notas que se están apagando cuando llega el golpe: no vuelven a empezar.
+    onset, frame, times = _activations()
+    notes = [{"start": 0.1, "end": 0.75, "pitch": p, "velocity": 0.6} for p in (50, 57)]
+    for p in (50, 57):
+        frame[8:50, p - 21] = 0.6
+        frame[50:65, p - 21] = 0.2
+        onset[49:52, p - 21] = (0.2, 0.35, 0.2)
+    assert engine.restrike(notes, onset, frame, times, 40, 88, 0.05) == notes
+
+
+def test_refine_beats_quita_el_baile_de_los_tiempos():
+    # Un golpe seco cada 0,38 s. Los tiempos llegan redondeados a saltos de 23 ms, como los da
+    # librosa: la distancia entre ellos alterna entre 16 y 17 saltos.
+    sr = 22050
+    clicks = 0.5 + 0.38 * np.arange(40)
+    audio = np.zeros(int(sr * 17))
+    burst = np.random.default_rng(0).normal(size=400) * np.exp(-np.arange(400) / 60)
+    for c in clicks:
+        audio[int(c * sr) : int(c * sr) + 400] += burst
+    rough = np.round(clicks * sr / 512) * 512 / sr
+    assert np.std(np.diff(rough)) > 0.008
+    beats = engine.refine_beats(rough, audio, sr)
+    assert len(beats) == len(clicks)
+    assert np.std(np.diff(beats)) < 0.002
+    # Todos quedan a la misma distancia del golpe (el desfase común se corrige después).
+    assert np.std(beats - clicks) < 0.003
 
 
 def test_guitar_parts_parte_por_registro_si_se_piden_dos(tmp_path):
@@ -252,6 +337,26 @@ def test_transcribe_monophonic_acierta_la_octava_y_separa_notas_repetidas(tmp_pa
     notes = engine.transcribe_monophonic(path, 28, 350)
     assert [n["pitch"] for n in notes] == [26, 26, 26, 33]
     for note, expected in zip(notes, (0.25, 0.65, 1.05, 1.45)):
+        assert abs(note["start"] - expected) < 0.05
+
+
+def test_transcribe_monophonic_separa_notas_repetidas_sin_cambio_de_timbre(tmp_path):
+    # La misma nota cuatro veces, ligada: el sonido no cambia, solo cae el volumen y vuelve a
+    # subir. Después, una nota larga con un vibrato suave de volumen, que es una sola.
+    sr = 22050
+    t = np.arange(int(sr * 0.3)) / sr
+    swell = (0.35 + 0.65 * np.exp(-6 * t)) * np.minimum(1, 0.35 + t * 40)
+    held = np.arange(int(sr * 1.2)) / sr
+    envelope = np.concatenate([np.tile(swell, 4), 0.8 + 0.1 * np.sin(2 * np.pi * 3 * held)])
+    time = np.arange(len(envelope)) / sr
+    phase = 2 * np.pi * np.where(time < 1.2, 55.0, 73.42) * time
+    wave = sum(np.sin(k * phase) / k for k in (1, 2, 3)) * envelope
+    audio = np.concatenate([np.zeros(sr // 4), wave, np.zeros(sr // 4)])
+    path = tmp_path / "bass.wav"
+    sf.write(path, audio / np.abs(audio).max() * 0.8, sr)
+    notes = engine.transcribe_monophonic(path, 28, 350)
+    assert [n["pitch"] for n in notes] == [33, 33, 33, 33, 38]
+    for note, expected in zip(notes, (0.25, 0.55, 0.85, 1.15, 1.45)):
         assert abs(note["start"] - expected) < 0.05
 
 
