@@ -1,6 +1,6 @@
 [package]
 name = "bandtabs"
-version = "0.4.0"
+version = "0.5.0"
 description = "Visor, reproductor y transcriptor de tablaturas"
 authors = ["Formoso (FormosoCrl)"]
 license-file = "../LICENSE"
