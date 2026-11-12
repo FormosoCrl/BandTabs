@@ -335,6 +335,44 @@ def tempo_factor(period: float, drums: list[dict] | None) -> float:
     return 2.0 if 60 / period > 160 else 1.0
 
 
+def refine_beats(beats, mono, sr: int):
+    """
+    Afina los tiempos que da librosa, que caen en saltos de 23 ms (a 160 BPM, un cuarto de
+    semicorchea): cada tiempo se lleva al ataque más cercano medido con saltos de 3 ms y después
+    se suaviza la serie, porque el pulso de una canción no cambia de un tiempo al siguiente.
+    """
+    import librosa
+    import numpy as np
+
+    beats = np.asarray(beats, dtype=float)
+    if len(beats) < 8:
+        return beats
+    hop = 64
+    envelope = librosa.onset.onset_strength(y=mono, sr=sr, hop_length=hop, n_fft=1024)
+    floor = float(np.median(envelope)) + 1e-9
+    reach = int(round(0.035 * sr / hop))
+    moved = beats.copy()
+    weight = np.full(len(beats), 0.2)
+    for i, frame in enumerate(librosa.time_to_frames(beats, sr=sr, hop_length=hop)):
+        lo, hi = max(0, frame - reach), min(len(envelope), frame + reach + 1)
+        if hi - lo < 3:
+            continue
+        top = lo + int(np.argmax(envelope[lo:hi]))
+        # Solo cuenta un ataque claro; si no lo hay, el tiempo se fía de sus vecinos.
+        if envelope[top] > 4 * floor and lo < top < hi - 1:
+            moved[i] = top * hop / sr
+            weight[i] = 1.0
+    # Recta ajustada a los tiempos de alrededor: quita el baile sin borrar los cambios de tempo.
+    index = np.arange(len(beats), dtype=float)
+    smooth = moved.copy()
+    span = 4
+    for i in range(len(beats)):
+        lo, hi = max(0, i - span), min(len(beats), i + span + 1)
+        slope, base = np.polyfit(index[lo:hi], moved[lo:hi], 1, w=weight[lo:hi])
+        smooth[i] = slope * i + base
+    return smooth
+
+
 def analyze_rhythm(audio, stems: dict[str, Path] | None, drums: list[dict] | None = None) -> dict:
     import librosa
     import numpy as np
@@ -357,7 +395,16 @@ def analyze_rhythm(audio, stems: dict[str, Path] | None, drums: list[dict] | Non
             middle = (beat_frames[:-1] + beat_frames[1:]) // 2
             beat_frames = np.sort(np.concatenate([beat_frames, middle]))
         tempo /= factor
-    beats = librosa.frames_to_time(beat_frames, sr=22050)
+    beats = refine_beats(librosa.frames_to_time(beat_frames, sr=22050), mono, 22050)
+    if len(beats) >= 8:
+        # librosa a veces no marca tiempos hasta que entra la batería: se sigue el pulso hacia
+        # atrás hasta donde empieza la música, y hacia delante hasta donde acaba.
+        _, (sound_start, sound_end) = librosa.effects.trim(mono, top_db=40)
+        before, after = float(np.median(np.diff(beats[:9]))), float(np.median(np.diff(beats[-9:])))
+        early = np.arange(1, int((beats[0] - sound_start / 22050) / before) + 1)[::-1]
+        late = np.arange(1, int((sound_end / 22050 - beats[-1]) / after) + 1)
+        beats = np.concatenate([beats[0] - early * before, beats, beats[-1] + late * after])
+    beat_frames = librosa.time_to_frames(beats, sr=22050)
 
     # El primer tiempo de cada compás suele coincidir con el bombo y el bajo, y con los cambios
     # de acorde.
@@ -405,6 +452,8 @@ NOTE_RANGES = {
 # Una pista con menos de esta parte del volumen de la más fuerte se da por vacía.
 QUIET_STEM = 0.08
 
+GUITAR_ONSET = 0.5
+
 TRACK_NAMES = {"guitar": "Guitarra", "bass": "Bajo", "piano": "Piano", "vocals": "Voz"}
 
 
@@ -428,6 +477,7 @@ def transcribe_monophonic(path: Path, fmin: float, fmax: float, sr: int = 11025)
     """
     import librosa
     import numpy as np
+    import scipy.ndimage
     import scipy.signal
 
     y, _ = librosa.load(path, sr=sr, mono=True)
@@ -443,7 +493,17 @@ def transcribe_monophonic(path: Path, fmin: float, fmax: float, sr: int = 11025)
     pitch = pitch[: len(level)]
     peak = float(np.percentile(level, 95)) + 1e-9
     pitch = np.where(level > max(1e-4, peak * 0.06), pitch, -1)
-    onsets = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop, backtrack=False, delta=0.1)
+    onsets = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop, backtrack=False, delta=0.07)
+    # Una nota repetida con los dedos apenas cambia de timbre, pero el volumen cae y vuelve a
+    # subir de golpe: eso también es un ataque.
+    fast = librosa.feature.rms(y=y, frame_length=512, hop_length=hop)[0]
+    back = int(np.ceil(0.06 / (hop / sr)))
+    dip = scipy.ndimage.minimum_filter1d(fast, back + 1, origin=back // 2)
+    rising = (fast > 1.5 * dip) & (fast > 0.2 * np.percentile(fast, 95))
+    plucks = np.flatnonzero(rising[1:] & ~rising[:-1]) + 1
+    onsets = np.unique(np.concatenate([onsets, plucks])).astype(int)
+    # Los dos métodos marcan el mismo ataque con unas milésimas de diferencia.
+    onsets = onsets[np.concatenate([[True], np.diff(onsets) > 4])]
     is_onset = np.zeros(len(pitch) + 1, dtype=bool)
     is_onset[onsets[onsets < len(pitch)]] = True
 
@@ -519,6 +579,65 @@ def clean_chords(notes: list[dict], max_notes: int, window: float = 0.05) -> lis
     return out
 
 
+STRUM_MIN_STRENGTH = 0.75  # cuánto sobresale la suma de activaciones de inicio en un golpe de púa
+STRUM_MIN_ONSET = 0.25  # activación de inicio de una nota para darla por atacada en ese golpe
+STRUM_MIN_NOTES = 2  # notas que tienen que volver a atacarse a la vez para que sea un rasgueo
+
+
+def restrike(notes: list[dict], onset, frame, times, low: int, high: int, min_length: float) -> list[dict]:
+    """
+    Recupera los ataques que Basic Pitch deja pasar en un rasgueo rápido. Al rasguear, las notas
+    del acorde siguen sonando de un golpe al siguiente y el modelo marca el nuevo ataque con poca
+    seguridad en cada cuerda, por debajo del umbral: se queda con una nota larga donde hay varios
+    golpes. Pero ese ataque flojo aparece a la vez en varias cuerdas, y eso sí es una señal clara.
+    Aquí se buscan esos golpes (picos de la suma de activaciones de inicio de todas las notas) y,
+    si en uno hay al menos dos notas sonando con algo de activación propia, se cortan ahí para
+    que vuelvan a empezar. No se añaden notas que el modelo no haya oído, y una sola nota que se
+    apaga mientras se toca la siguiente (un arpegio, un solo) se deja como está.
+
+    `onset` y `frame` son las salidas del modelo (instantes x 88 notas desde La0) y `times` el
+    segundo de cada instante.
+    """
+    import numpy as np
+    import scipy.signal
+
+    first = 21
+    lo, hi = max(0, low - first), min(onset.shape[1], high - first + 1)
+    if len(times) < 3 or hi <= lo:
+        return notes
+    strength = onset[:, lo:hi].sum(axis=1)
+    step = float(np.median(np.diff(times)))
+    peaks, _ = scipy.signal.find_peaks(
+        strength, height=STRUM_MIN_STRENGTH, distance=max(1, int(round(0.06 / step)))
+    )
+    prominence = scipy.signal.peak_prominences(strength, peaks)[0]
+    peaks = peaks[prominence >= np.maximum(STRUM_MIN_STRENGTH, 0.3 * strength[peaks])]
+
+    notes = sorted(({**n} for n in notes), key=lambda n: n["start"])
+    hold = max(2, int(round(min_length / step)))
+    for f in peaks:
+        t = float(times[f])
+        near = slice(max(0, f - 1), f + 2)
+        after = slice(f + 1, min(len(times), f + 1 + hold))
+        before = slice(max(0, f - 1 - hold), max(1, f - 1))
+        struck = []
+        for n in notes:
+            column = n["pitch"] - first
+            if not (n["start"] + min_length < t < n["end"]) or not lo <= column < hi:
+                continue
+            level = float(frame[after, column].mean())
+            # Tiene que seguir sonando después del golpe: la cola de una nota que se apaga no
+            # es un ataque.
+            if onset[near, column].max() >= STRUM_MIN_ONSET and level >= max(0.15, 0.6 * frame[before, column].mean()):
+                struck.append((n, level))
+        if len(struck) < STRUM_MIN_NOTES:
+            continue
+        for n, level in struck:
+            notes.append({**n, "start": round(t, 4), "end": max(n["end"], round(t + min_length, 4)), "velocity": level})
+            n["end"] = round(t, 4)
+    return sorted(notes, key=lambda n: n["start"])
+
+
 # --------------------------------------------------------------------------- varias guitarras
 #
 # Demucs da una sola pista de guitarra con todas las guitarras mezcladas. En el rock es habitual
@@ -533,6 +652,7 @@ SIDE_MIN_PAN = 0.25  # a partir de aquí un sonido se considera "de un lado" (-1
 SIDE_MIN_MASS = 0.08  # parte mínima de la energía que tiene que haber en ese lado
 OWN_MIN_SHARE = 0.3  # parte de las notas de un lado que no puede estar en el otro para ser otra guitarra
 PART_MIN_NOTES = 8
+DOUBLE_MAX_ALIKE = 0.6  # correlación entre canales por debajo de la cual son dos tomas distintas
 PART_NAMES = {
     "left": "Guitarra (izquierda)",
     "right": "Guitarra (derecha)",
@@ -544,7 +664,8 @@ def side_gains(spec_l, spec_r) -> tuple[float | None, float | None]:
     """
     Busca dónde están panoramizadas las fuentes de cada lado. Devuelve (g_izq, g_der): cuánto se
     oye en el canal contrario lo que suena a la izquierda y a la derecha, de 0 (todo a un lado) a
-    casi 1 (casi en el centro). Si a un lado no hay nada, devuelve None para ese lado.
+    casi 1 (casi en el centro). Si a un lado no hay nada, devuelve None para ese lado. Tampoco
+    cuenta como fuente la falda de lo que suena en el centro: tiene que haber un pico aparte.
     """
     import numpy as np
 
@@ -560,6 +681,10 @@ def side_gains(spec_l, spec_r) -> tuple[float | None, float | None]:
         if hist[side].sum() < SIDE_MIN_MASS:
             return None
         top = int(np.argmax(np.where(side, hist, 0)))
+        # Dos casillas hacia el centro, porque un pico puede caer justo entre dos.
+        toward_center = top + (2 if centers[top] < 0 else -2)
+        if hist[toward_center] > hist[top]:
+            return None
         near = slice(max(0, top - 1), top + 2)
         peak = abs(float(np.sum(centers[near] * hist[near]) / np.sum(hist[near])))
         # Casi del todo a un lado: se da por panoramizado del todo (el histograma no afina más).
@@ -592,7 +717,13 @@ def stereo_views(stem: Path, out_dir: Path, sr: int = 22050) -> dict[str, Path] 
         librosa.stft(left, n_fft=2048, hop_length=512), librosa.stft(right, n_fft=2048, hop_length=512)
     )
     if gain_left is None and gain_right is None:
-        return None
+        # Sin picos a los lados pero con los canales muy distintos entre sí: es la misma parte
+        # grabada dos veces, una toma en cada canal (el reparto por frecuencias sale como una
+        # campana centrada). Cada canal ya es una toma limpia.
+        alike = float(np.mean(left * right)) / (float(np.sqrt(np.mean(left**2) * np.mean(right**2))) + 1e-12)
+        if alike > DOUBLE_MAX_ALIKE:
+            return None
+        gain_left = gain_right = 0.0
     # Lo que suena a la derecha llega al canal izquierdo multiplicado por gain_right: restándolo
     # del izquierdo desaparece. Y al revés.
     views = {
@@ -655,11 +786,13 @@ def merge_takes(takes: dict[str, list[dict]], tolerance: float = 0.06) -> list[d
     return merged
 
 
-def group_by_side(takes: dict[str, list[dict]]) -> dict[str, list[dict]]:
+def group_by_side(takes: dict[str, list[dict]]) -> dict[str, list[dict]] | None:
     """
     Decide qué guitarras hay comparando las dos escuchas ("left"/"right", o "center" si a ese lado
     no hay nada). Una escucha cuenta como guitarra aparte si una buena parte de lo que suena en
-    ella no está en la otra. Devuelve las notas de cada guitarra.
+    ella no está en la otra. Devuelve las notas de cada guitarra, o None si las dos escuchas
+    son la misma guitarra (entonces vale más transcribir la pista entera que juntarlas: la misma
+    nota sale en cada escucha con unas milésimas de diferencia y quedaría repetida).
     """
     merged = merge_takes(takes)
     own = {side: [n for n in merged if n["seen"] == {side}] for side in takes}
@@ -675,7 +808,7 @@ def group_by_side(takes: dict[str, list[dict]]) -> dict[str, list[dict]]:
         # Una guitarra a un lado y el resto en el centro: en la otra escucha ya no está la del
         # lado, así que esa escucha entera es la guitarra del centro.
         return {first: own[first], "center": takes[second]}
-    return {"center": [{k: v for k, v in n.items() if k != "seen"} for n in merged]}
+    return None
 
 
 def note_overlap(a: list[dict], b: list[dict], tolerance: float = 0.08) -> float:
@@ -742,10 +875,9 @@ def guitar_parts(
     Devuelve (id, nombre, notas sin limpiar) por guitarra.
     """
     views = None if wanted == 1 else stereo_views(stem, work / "stems")
-    if views is None:
+    grouped = views and group_by_side({side: raw_notes(path) for side, path in views.items()})
+    if not grouped:
         grouped = {"center": raw_notes(stem)}
-    else:
-        grouped = group_by_side({side: raw_notes(path) for side, path in views.items()})
 
     order = ["left", "center", "right"]
     parts = [(f"guitar_{p}", PART_NAMES[p], grouped[p]) for p in order if p in grouped]
@@ -784,26 +916,35 @@ def transcribe_notes(
 ) -> list[dict]:
     from basic_pitch import ICASSP_2022_MODEL_PATH
     from basic_pitch.inference import Model, predict
+    from basic_pitch.note_creation import model_frames_to_time
+    import math
 
     model = Model(Path(ICASSP_2022_MODEL_PATH).parent / "nmp.onnx")
 
     def raw_notes(path: Path, kind: str, fmin: float, fmax: float) -> list[dict]:
-        _, _, events = predict(
+        # Nada mucho más corto que una semicorchea a este tempo. El margen es amplio porque en
+        # un rasgueo rápido cada nota se apaga antes de que llegue el siguiente golpe.
+        min_length = max(45.0, 60000 / max(tempo, 40) / 4 * 0.55)
+        output, _, events = predict(
             str(path),
             model,
-            onset_threshold=0.6 if kind == "guitar" else 0.55,
+            onset_threshold=GUITAR_ONSET if kind == "guitar" else 0.55,
             frame_threshold=0.3,
-            # Nada más corto que una semicorchea a este tempo (con margen).
-            minimum_note_length=max(90.0, 60000 / max(tempo, 40) / 4 * 0.7),
+            minimum_note_length=min_length,
             minimum_frequency=fmin,
             maximum_frequency=fmax,
             melodia_trick=True,
         )
-        return [
+        notes = [
             {"start": round(float(s), 4), "end": round(float(e), 4), "pitch": int(p), "velocity": float(a)}
             for s, e, p, a, _ in events
             if a > 0.25
         ]
+        if kind == "guitar":
+            low, high = (int(round(69 + 12 * math.log2(f / 440))) for f in (fmin, fmax))
+            times = model_frames_to_time(len(output["onset"]))
+            notes = restrike(notes, output["onset"], output["note"], times, low, high, min_length / 1000)
+        return notes
 
     tracks = []
     wanted = [s for s in NOTE_RANGES if s in stems]

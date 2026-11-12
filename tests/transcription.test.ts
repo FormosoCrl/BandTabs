@@ -124,6 +124,32 @@ describe('transcriptionToAlphaTex', () => {
   });
 });
 
+describe('desfase por instrumento', () => {
+  it('cuadra el bajo y la guitarra aunque cada uno llegue con su retraso', () => {
+    // Corcheas a 120 BPM. La guitarra se detecta 20 ms antes que la batería y el bajo 40 ms
+    // después: entre los dos hay media semicorchea y con un solo desfase común no caben.
+    const eighths = Array.from({ length: 16 }, (_, i) => 0.5 + i * 0.25);
+    const track = (kind: 'guitar' | 'bass', shift: number, pitch: number) => ({
+      stem: kind,
+      kind,
+      name: kind,
+      program: 29,
+      notes: eighths.map((t) => ({ start: t + shift, end: t + shift + 0.2, pitch, velocity: 0.8 })),
+    });
+    const tex = transcriptionToAlphaTex({
+      ...RESULT,
+      tracks: [track('guitar', -0.02, 45), track('bass', 0.04, 33)],
+      drums: eighths.map((time) => ({ time, piece: 'hihat' as const })),
+      chords: [],
+      lyrics: { language: '', words: [] },
+    });
+    // Dos compases de ocho corcheas seguidas en cada pista, sin silencios ni notas desplazadas.
+    const bars = tex.split('\n').filter((line) => line.endsWith('|') && !line.startsWith('r'));
+    expect(bars).toHaveLength(6);
+    for (const bar of bars) expect(bar).toMatch(/^(\S+\.8 ){8}\|$/);
+  });
+});
+
 describe('afinación en la transcripción', () => {
   const lowD: EngineResult = {
     ...RESULT,

@@ -165,6 +165,26 @@ export function transcriptionToAlphaTex(
   const startTime = starts.length ? Math.max(0, starts.reduce((a, b) => Math.min(a, b))) : undefined;
   const toStep = makeTimeGrid(result.beats, result.downbeat, result.tempo, startTime, beatsPerBar);
   toStep.bias = gridBias(starts, toStep);
+  // Cada instrumento se detecta con un método distinto y lleva su propio retraso (el bajo llega
+  // a ir un tercio de semicorchea por detrás de la guitarra): cada uno se cuadra con su desfase.
+  // El desfase solo se conoce salvo semicorcheas enteras: se toma el más cercano al de la
+  // batería, que es lo que se detecta con más precisión, para que dos pistas no acaben a una
+  // semicorchea de distancia.
+  const drumTimes = result.drums.map((d) => d.time);
+  const reference = drumTimes.length >= 8 ? gridBias(drumTimes, toStep) : toStep.bias;
+  const stepper = (times: number[]) => {
+    if (times.length < 8) return toStep;
+    const own = gridBias(times, toStep);
+    const bias = own + Math.round(reference - own);
+    return (time: number) => Math.round(toStep.exact(time) - bias) + 0;
+  };
+  const steppers = new Map<string, (time: number) => number>();
+  for (const kind of new Set(result.tracks.map((t) => t.kind))) {
+    // Las guitarras van juntas: suelen tocar a la vez y se detectan igual.
+    const times = result.tracks.filter((t) => t.kind === kind).flatMap((t) => t.notes.map((n) => n.start));
+    steppers.set(kind, stepper(times));
+  }
+  const drumStep = stepper(drumTimes);
   const barSteps = beatsPerBar * 4;
   const lastStep = Math.max(1, toStep(result.duration));
   const barCount = Math.max(1, Math.ceil(lastStep / barSteps));
@@ -178,7 +198,7 @@ export function transcriptionToAlphaTex(
 
   const built: { header: string[]; events: GridEvent[]; kind: string }[] = [];
   for (const track of result.tracks) {
-    const onsets = groupOnsets(track.notes, toStep);
+    const onsets = groupOnsets(track.notes, steppers.get(track.kind) ?? toStep);
     if (onsets.length === 0) continue;
     const header = [`\\track ${quote(track.name)} \\instrument ${track.program}`];
     let bodies: string[];
@@ -217,7 +237,7 @@ export function transcriptionToAlphaTex(
   if (result.drums.length) {
     const hits = new Map<number, Set<number>>();
     for (const hit of result.drums) {
-      const step = toStep(hit.time);
+      const step = drumStep(hit.time);
       if (step < 0) continue;
       if (!hits.has(step)) hits.set(step, new Set());
       hits.get(step)!.add(DRUM_MIDI[hit.piece]);

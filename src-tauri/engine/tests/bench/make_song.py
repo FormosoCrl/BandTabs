@@ -5,7 +5,9 @@
 
 Variantes (dónde suena cada guitarra): wide (rítmica y solista a medio lado), hard (del todo a cada
 lado), center (las dos en el centro), rock (rítmica doblada a los lados y solista en el centro),
-leftcenter (rítmica a la izquierda y solista en el centro).
+leftcenter (rítmica a la izquierda y solista en el centro), strum (una sola parte de acordes
+rasgueados en semicorcheas, grabada dos veces, una toma a cada lado; empieza dos compases antes
+que el bajo y la batería).
 Escribe song.wav, una pista true_*.wav por instrumento y truth.json con las notas.
 """
 import json, sys
@@ -25,18 +27,28 @@ def power(root): return [root, root + 7, root + 12]
 
 tracks = {k: [] for k in ("rhythm", "lead", "bass", "vocals", "drums")}
 lead_pat = [0, 7, 12, 16, 12, 7, 12, 19]  # arpegio mayor sobre la fundamental + octava
+STRUM = VARIANT == "strum"
 for bar in range(BARS):
     root = ROOTS[bar % 4]
     t0 = LEAD_IN + bar * 4 * BEAT
+    if STRUM:
+        # acorde de cuatro notas en semicorcheas, sin la 7ª y la 12ª de cada compás
+        for e in range(16):
+            if e not in (6, 11):
+                t = t0 + e * BEAT / 4
+                for p in power(root) + [root + 16]:
+                    tracks["rhythm"].append((t, t + BEAT / 4 * 0.9, p, 100 if e % 4 == 0 else 85))
+        if bar < 2:
+            continue
     for e in range(8):  # corcheas
         t = t0 + e * BEAT / 2
         # rítmica: quintas en corcheas, con un silencio en la 4ª corchea de compases impares
-        if not (bar % 2 == 1 and e == 3):
+        if not STRUM and not (bar % 2 == 1 and e == 3):
             for p in power(root):
                 tracks["rhythm"].append((t, t + BEAT / 2 * 0.9, p, 100))
         tracks["bass"].append((t, t + BEAT / 2 * 0.9, root - 12, 105))
         tracks["drums"].append((t, t + 0.1, 42, 80))
-        if bar >= 4:
+        if bar >= 4 and not STRUM:
             third = 3 if bar % 4 == 99 else 4
             iv = [0, 7, 12, 12 + third, 12, 7, 12, 19][e]
             tracks["lead"].append((t, t + BEAT / 2 * 0.95, root + 12 + iv, 95))
@@ -52,7 +64,7 @@ for bar in range(BARS):
 PROGRAMS = {"rhythm": 30, "lead": 29, "bass": 33, "vocals": 53}
 PAN = {"wide": {"rhythm": -0.8, "lead": 0.8}, "hard": {"rhythm": -1.0, "lead": 1.0},
        "center": {"rhythm": 0.0, "lead": 0.0}, "rock": {"rhythm": 0.0, "lead": 0.0},
-       "leftcenter": {"rhythm": -0.9, "lead": 0.0}}[VARIANT]
+       "leftcenter": {"rhythm": -0.9, "lead": 0.0}, "strum": {"rhythm": 0.0, "lead": 0.0}}[VARIANT]
 total = int((LEAD_IN + BARS * 4 * BEAT + 2) * SR)
 
 rng = np.random.default_rng(3)
@@ -88,7 +100,7 @@ for name, notes in tracks.items():
     audio = render(name, notes).mean(axis=1) * GAIN[name]
     pan = PAN.get(name, 0.0)
     stereo = np.stack([audio * np.sqrt((1 - pan) / 2) , audio * np.sqrt((1 + pan) / 2)], axis=1) * 1.4
-    if VARIANT == "rock" and name == "rhythm":  # rítmica grabada dos veces, una toma a cada lado
+    if VARIANT in ("rock", "strum") and name == "rhythm":  # rítmica grabada dos veces, una toma a cada lado
         take2 = render(name, notes, bend=250, jitter=0.012).mean(axis=1) * GAIN[name]
         stereo = np.stack([audio, take2 * 0.95], axis=1)
     sf.write(f"{OUT}/true_{name}.wav", stereo, SR)
