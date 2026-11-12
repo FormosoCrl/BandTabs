@@ -52,6 +52,31 @@ describe('tabs en texto (ASCII)', () => {
     expect(beatsOf(tex)[0]).toEqual(['12.1', '15.1']);
   });
 
+  it('cuadra cada compás a un 4/4 según la posición de las notas', () => {
+    const tab = [
+      'e|----------------|----------------|',
+      'B|----------------|----------------|',
+      'G|----------------|----------------|',
+      'D|----------------|--------2-------|',
+      'A|-2---2---2---2--|-2--------------|',
+      'E|-0---0---0---0--|-0--------------|',
+    ].join('\n');
+    const staff = importer.ScoreLoader.loadAlphaTex(asciiTabToAlphaTex(tab, 'x')).tracks[0].staves[0];
+    const durations = staff.bars.map((bar) => bar.voices[0].beats.map((b) => b.duration));
+    expect(durations).toEqual([
+      [4, 4, 4, 4], // cuatro negras
+      [2, 2], // dos blancas: la segunda nota está a mitad de compás
+    ]);
+  });
+
+  it('reparte en compases una línea sin barras', () => {
+    const line = (fill: string) => `|${fill.repeat(24)}`;
+    const tab = ['e', 'B', 'G', 'D', 'A'].map((s) => `${s}${line('--')}`).join('\n') + `\nE${line('-0')}`;
+    const staff = importer.ScoreLoader.loadAlphaTex(asciiTabToAlphaTex(tab, 'x')).tracks[0].staves[0];
+    const notes = staff.bars.map((bar) => bar.voices[0].beats.filter((b) => !b.isRest).length);
+    expect(notes).toEqual([12, 12]);
+  });
+
   it('importa un .txt a la biblioteca como guitarra', () => {
     const file = prepareFile('mi riff.txt', new TextEncoder().encode(ASCII));
     const song = parseSong('mi riff.txt', file);
@@ -118,6 +143,20 @@ describe('MIDI', () => {
       (n) => score.tracks[1].percussionArticulations[n.percussionArticulation].outputMidiNumber,
     );
     expect(outputs.sort()).toEqual([36, 42]);
+  });
+
+  it('elige una afinación en la que quepan las notas graves', () => {
+    const midi = new Midi();
+    const guitar = midi.addTrack();
+    guitar.instrument.number = 30;
+    const ppq = midi.header.ppq;
+    [38, 45, 50, 38, 45, 50, 38, 45].forEach((note, i) =>
+      guitar.addNote({ midi: note, ticks: i * ppq, durationTicks: ppq }),
+    );
+    const tex = midiToAlphaTex(midi.toArray(), 'drop');
+    const staff = importer.ScoreLoader.loadAlphaTex(tex).tracks[0].staves[0];
+    expect(staff.tuning).toEqual([64, 59, 55, 50, 45, 38]);
+    expect(beatsOf(tex, 0)[0]).toEqual(['0.6', '0.5', '0.4', '0.6']);
   });
 
   it('importa un .mid a la biblioteca', () => {

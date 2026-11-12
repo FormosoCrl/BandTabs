@@ -37,9 +37,9 @@ STEPS = {
     # paso: (inicio, fin) dentro de la barra de progreso total
     "download": (0.00, 0.12),
     "separate": (0.12, 0.62),
-    "rhythm": (0.62, 0.66),
-    "notes": (0.66, 0.84),
-    "drums": (0.84, 0.86),
+    "drums": (0.62, 0.64),
+    "rhythm": (0.64, 0.68),
+    "notes": (0.68, 0.86),
     "chords": (0.86, 0.88),
     "lyrics": (0.88, 1.00),
 }
@@ -106,7 +106,63 @@ def parse_spotify_page(page: str) -> dict:
     return {"title": title, "artist": artist or ""}
 
 
+VIDEO_GONE = ("video unavailable", "private video", "not available", "has been removed", "members-only")
+OFFLINE = ("getaddrinfo", "name resolution", "urlopen error", "timed out", "connection refused", "network is unreachable")
+
+
+def friendly_error(error: BaseException) -> str | None:
+    """Mensaje para el usuario de los fallos más habituales, o None si no se reconoce."""
+    text = str(error).lower()
+    if isinstance(error, MemoryError) or "not enough memory" in text or "defaultcpuallocator" in text:
+        return "No hay memoria suficiente para analizar esta canción. Cierra otros programas o prueba con una más corta."
+    if "sign in to confirm" in text or "not a bot" in text:
+        return "YouTube ha bloqueado la descarga. Prueba más tarde o usa un archivo de audio."
+    if any(clue in text for clue in VIDEO_GONE):
+        return "Ese vídeo no está disponible (es privado, se ha borrado o está bloqueado en tu país)."
+    if any(clue in text for clue in OFFLINE):
+        return "No se pudo conectar. Comprueba la conexión a internet y vuelve a intentarlo."
+    return None
+
+
+def update_downloader() -> bool:
+    """
+    Actualiza yt-dlp en el Python del motor. YouTube cambia a menudo y las versiones viejas dejan
+    de poder descargar, así que se prueba esto antes de dar la descarga por imposible.
+    """
+    progress("download", 0.02, "Actualizando el descargador de YouTube…")
+    try:
+        done = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", "--only-binary", ":all:",
+             "--disable-pip-version-check", "--no-warn-script-location", "yt-dlp", "yt-dlp-ejs"],
+            capture_output=True,
+            timeout=300,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if done.returncode != 0:
+        return False
+    for name in [m for m in sys.modules if m == "yt_dlp" or m.startswith("yt_dlp.")]:
+        del sys.modules[name]
+    return True
+
+
 def download_audio(query: str, work: Path) -> dict:
+    try:
+        return download_audio_once(query, work)
+    except UserError:
+        raise
+    except Exception as error:  # noqa: BLE001
+        # Sin conexión o con el vídeo borrado, actualizar no arregla nada.
+        if friendly_error(error) and "bloqueado la descarga" not in friendly_error(error):
+            raise
+        print(f"Falló la descarga, se prueba a actualizar yt-dlp: {error!r}", file=sys.stderr)
+        if not update_downloader():
+            raise
+        return download_audio_once(query, work)
+
+
+def download_audio_once(query: str, work: Path) -> dict:
     import yt_dlp
 
     def hook(d: dict) -> None:
@@ -180,6 +236,41 @@ def load_audio(path: Path, sample_rate: int = SAMPLE_RATE):
 
 # --------------------------------------------------------------------------- análisis
 
+def overlap_add(wav, chunk: int, overlap: int, run):
+    """
+    Procesa `wav` (canales, muestras) por trozos de `chunk` muestras que se pisan `overlap` y los
+    une con un fundido, para que no quede un salto en cada unión (que la transcripción tomaría por
+    notas). `run(trozo, fracción_hecha)` devuelve (fuentes, canales, muestras) de ese trozo.
+    Por trozos también se puede informar del avance.
+    """
+    import torch
+
+    total = wav.shape[-1]
+    step = chunk - overlap
+    out = None
+    start = 0
+    while True:
+        piece = wav[..., start : start + chunk]
+        n = piece.shape[-1]
+        last = start + chunk >= total
+        result = run(piece, 1.0 if last else (start + chunk) / total)
+        weight = torch.ones(n)
+        fade = min(overlap, n)
+        if start > 0:
+            weight[:fade] = torch.linspace(0, 1, fade + 2)[1:-1]
+        if not last:
+            weight[-fade:] = torch.linspace(1, 0, fade + 2)[1:-1]
+        if out is None:
+            out = torch.zeros(*result.shape[:-1], total)
+            norm = torch.zeros(total)
+        out[..., start : start + n] += result.cpu() * weight
+        norm[start : start + n] += weight
+        if last:
+            break
+        start += step
+    return out / norm.clamp(min=1e-8)
+
+
 def separate(audio, work: Path) -> dict[str, Path]:
     import numpy as np
     import soundfile as sf
@@ -197,18 +288,13 @@ def separate(audio, work: Path) -> dict[str, Path]:
     mean, std = ref.mean(), ref.std() + 1e-8
     progress("separate", 0.05, "Separando instrumentos… (puede tardar varios minutos)")
 
-    # Por trozos para poder informar del avance.
-    chunk = SAMPLE_RATE * 30
-    total = wav.shape[1]
-    parts = []
-    with torch.no_grad():
-        for start in range(0, total, chunk):
-            piece = wav[:, start : start + chunk]
-            piece = (piece - mean) / std
-            out = apply_model(model, piece[None], device=device, split=True, overlap=0.25, progress=False)[0]
-            parts.append(out * std + mean)
-            progress("separate", 0.05 + 0.95 * min(1, (start + chunk) / total), "Separando instrumentos…")
-    sources = torch.cat(parts, dim=-1).cpu().numpy()
+    def run(piece, done: float):
+        with torch.no_grad():
+            out = apply_model(model, ((piece - mean) / std)[None], device=device, split=True, overlap=0.25, progress=False)[0]
+        progress("separate", 0.05 + 0.95 * done, "Separando instrumentos…")
+        return out * std + mean
+
+    sources = overlap_add(wav, SAMPLE_RATE * 30, SAMPLE_RATE, run).cpu().numpy()
 
     stems_dir = work / "stems"
     stems_dir.mkdir(exist_ok=True)
@@ -228,35 +314,80 @@ def rms(path: Path) -> float:
     return float(np.sqrt(np.mean(np.square(data)))) if data.size else 0.0
 
 
-def analyze_rhythm(audio, stems: dict[str, Path] | None) -> dict:
+def tempo_factor(period: float, drums: list[dict] | None) -> float:
+    """
+    Por cuánto hay que multiplicar la distancia entre tiempos que da librosa (0,5, 1 o 2), que a
+    veces cuenta corcheas como tiempos o al revés. La caja suele ir en los tiempos 2 y 4, así que
+    entre dos golpes de caja hay dos tiempos. Sin batería clara: por encima de 160 BPM se supone
+    que librosa ha contado el doble.
+    """
+    import numpy as np
+
+    snare = sorted({hit["time"] for hit in drums or [] if hit["piece"] == "snare"})
+    gaps = np.diff(snare)
+    gaps = gaps[(gaps > 0.2) & (gaps < 4.0)]
+    if len(gaps) >= 8:
+        typical = float(np.median(gaps))
+        if np.mean(np.abs(gaps - typical) <= 0.1 * typical) >= 0.5:
+            options = [f for f in (0.5, 1.0, 2.0) if 45 <= 60 / (period * f) <= 215]
+            if options:
+                return min(options, key=lambda f: abs(np.log(period * f / (typical / 2))))
+    return 2.0 if 60 / period > 160 else 1.0
+
+
+def analyze_rhythm(audio, stems: dict[str, Path] | None, drums: list[dict] | None = None) -> dict:
     import librosa
     import numpy as np
 
     progress("rhythm", 0, "Buscando el tempo y los compases…")
     mono = librosa.resample(audio.mean(0), orig_sr=SAMPLE_RATE, target_sr=22050)
     tempo, beat_frames = librosa.beat.beat_track(y=mono, sr=22050, units="frames", tightness=120)
-    beats = librosa.frames_to_time(beat_frames, sr=22050)
     tempo = float(np.atleast_1d(tempo)[0])
 
-    # librosa tiende a contar corcheas como tiempos (un 100 sale 200). Por encima de 160 se toma
-    # uno de cada dos tiempos, el que más coincide con golpes fuertes.
-    if tempo > 160 and len(beat_frames) >= 16:
-        envelope = librosa.onset.onset_strength(y=mono, sr=22050)
-        strength = envelope[np.minimum(beat_frames, len(envelope) - 1)]
-        offset = int(np.argmax([strength[0::2].mean(), strength[1::2].mean()]))
-        beat_frames = beat_frames[offset::2]
-        beats = beats[offset::2]
-        tempo /= 2
+    if len(beat_frames) >= 16:
+        factor = tempo_factor(float(np.median(np.diff(librosa.frames_to_time(beat_frames, sr=22050)))), drums)
+        if factor == 2.0:
+            # Uno de cada dos tiempos: el que más coincide con golpes fuertes.
+            envelope = librosa.onset.onset_strength(y=mono, sr=22050)
+            strength = envelope[np.minimum(beat_frames, len(envelope) - 1)]
+            offset = int(np.argmax([strength[0::2].mean(), strength[1::2].mean()]))
+            beat_frames = beat_frames[offset::2]
+        elif factor == 0.5:
+            # Faltan tiempos: se añade uno en medio de cada dos.
+            middle = (beat_frames[:-1] + beat_frames[1:]) // 2
+            beat_frames = np.sort(np.concatenate([beat_frames, middle]))
+        tempo /= factor
+    beats = librosa.frames_to_time(beat_frames, sr=22050)
 
-    # El primer tiempo de cada compás suele coincidir con el bombo y el bajo.
+    # El primer tiempo de cada compás suele coincidir con el bombo y el bajo, y con los cambios
+    # de acorde.
+    phase = 0
     if stems and "drums" in stems and len(beat_frames) >= 8:
         low, _ = librosa.load(stems["drums"], sr=22050, mono=True)
         bass, _ = librosa.load(stems["bass"], sr=22050, mono=True)
-        envelope = librosa.onset.onset_strength(y=low + bass, sr=22050, fmax=200)
+        size = min(len(low), len(bass))
+        envelope = librosa.onset.onset_strength(y=low[:size] + bass[:size], sr=22050, fmax=200)
         strength = envelope[np.minimum(beat_frames, len(envelope) - 1)]
-        phase = int(np.argmax([strength[p::4].mean() for p in range(4)]))
-    else:
-        phase = 0
+        chroma = librosa.util.sync(
+            librosa.feature.chroma_stft(y=bass[:size], sr=22050, n_fft=4096, hop_length=512),
+            beat_frames,
+            aggregate=np.median,
+        )[:, 1:]  # sync añade el tramo anterior al primer tiempo
+        unit = chroma / (np.linalg.norm(chroma, axis=0, keepdims=True) + 1e-9)
+        change = np.concatenate([[0.0], 1 - np.sum(unit[:, 1:] * unit[:, :-1], axis=0)])
+        change = np.pad(change, (0, max(0, len(strength) - len(change))))[: len(strength)]
+
+        def by_phase(values) -> np.ndarray:
+            means = np.array([values[p::4].mean() for p in range(4)])
+            return means / (means.max() + 1e-9)
+
+        phase = int(np.argmax(by_phase(strength) + by_phase(change)))
+    # El tempo que da librosa sale de una tabla de valores fijos; la distancia real entre los
+    # tiempos detectados es más exacta.
+    if len(beats) >= 4:
+        gaps = np.diff(beats)
+        typical = np.median(gaps)
+        tempo = 60.0 / float(gaps[np.abs(gaps - typical) <= 0.2 * typical].mean())
     progress("rhythm", 1, f"Tempo aproximado: {round(tempo)} BPM")
     return {"tempo": tempo, "beats": [round(float(b), 4) for b in beats], "downbeat": phase, "beatsPerBar": 4}
 
@@ -266,10 +397,13 @@ NOTE_RANGES = {
     # Guitarra desde Do2 para que entren Drop D, Drop C y similares.
     "guitar": ("guitar", 29, 64, 1400, False),
     # Por encima de Mi4 en el bajo casi todo son armónicos de la nota real.
-    "bass": ("bass", 33, 30, 330, True),
+    "bass": ("bass", 33, 28, 350, True),
     "piano": ("piano", 0, 27, 4200, False),
     "vocals": ("vocals", 54, 75, 1100, True),
 }
+
+# Una pista con menos de esta parte del volumen de la más fuerte se da por vacía.
+QUIET_STEM = 0.08
 
 TRACK_NAMES = {"guitar": "Guitarra", "bass": "Bajo", "piano": "Piano", "vocals": "Voz"}
 
@@ -284,6 +418,62 @@ def monophonic(notes: list[dict]) -> list[dict]:
             out[-1]["end"] = note["start"]
         out.append(note)
     return [n for n in out if n["end"] - n["start"] > 0.05]
+
+
+def transcribe_monophonic(path: Path, fmin: float, fmax: float, sr: int = 11025) -> list[dict]:
+    """
+    Transcribe un instrumento que da una nota cada vez siguiendo su frecuencia fundamental (pYIN).
+    Para el bajo acierta la octava mucho mejor que Basic Pitch, que por debajo de Mi1 suele dar
+    la octava de arriba. Las notas repetidas se separan por los ataques.
+    """
+    import librosa
+    import numpy as np
+    import scipy.signal
+
+    y, _ = librosa.load(path, sr=sr, mono=True)
+    hop, frame = 128, 2048
+    # Solo hace falta saber el semitono: con pasos de un cuarto de semitono va cinco veces más
+    # rápido que con la resolución por defecto y acierta igual.
+    f0, voiced, _ = librosa.pyin(
+        y, fmin=fmin, fmax=fmax, sr=sr, frame_length=frame, hop_length=hop, resolution=0.25
+    )
+    pitch = np.where(voiced, np.round(librosa.hz_to_midi(np.where(voiced, f0, 440.0))), -1)
+    pitch = scipy.signal.medfilt(pitch, 5).astype(int)
+    level = librosa.feature.rms(y=y, frame_length=frame, hop_length=hop)[0][: len(pitch)]
+    pitch = pitch[: len(level)]
+    peak = float(np.percentile(level, 95)) + 1e-9
+    pitch = np.where(level > max(1e-4, peak * 0.06), pitch, -1)
+    onsets = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop, backtrack=False, delta=0.1)
+    is_onset = np.zeros(len(pitch) + 1, dtype=bool)
+    is_onset[onsets[onsets < len(pitch)]] = True
+
+    seconds = hop / sr
+    min_frames = int(np.ceil(0.07 / seconds))
+    notes: list[dict] = []
+    start: int | None = None
+
+    def close(end: int) -> None:
+        if start is None or end - start < min_frames:
+            return
+        # La ventana de análisis es larga y adelanta el principio de la nota: si hay un ataque
+        # detectado cerca, la nota empieza ahí.
+        near = onsets[np.abs(onsets - start) <= 8]
+        begin = int(near[np.argmin(np.abs(near - start))]) if len(near) else start
+        notes.append({
+            "start": round(begin * seconds, 4),
+            "end": round(max(end, begin + 1) * seconds, 4),
+            "pitch": int(pitch[start]),
+            "velocity": round(float(min(1.0, level[start:end].max() / peak)), 3),
+        })
+
+    for i in range(len(pitch)):
+        if start is not None and (pitch[i] != pitch[start] or (is_onset[i] and i - start >= min_frames)):
+            close(i)
+            start = None
+        if start is None and pitch[i] >= 0:
+            start = i
+    close(len(pitch))
+    return notes
 
 
 # Intervalos que coinciden con armónicos de una nota más grave (octava + quinta, dos octavas,
@@ -332,64 +522,160 @@ def clean_chords(notes: list[dict], max_notes: int, window: float = 0.05) -> lis
 # --------------------------------------------------------------------------- varias guitarras
 #
 # Demucs da una sola pista de guitarra con todas las guitarras mezcladas. En el rock es habitual
-# grabar cada guitarra en un lado del estéreo (rítmica a la izquierda y otra a la derecha, o la
-# misma parte grabada dos veces, una en cada lado). Aquí se separa la pista por su posición en el
-# estéreo y, si el usuario pide más guitarras de las que salen así, por registro (grave/agudo).
+# poner cada guitarra en un lado del estéreo, o grabar la misma parte dos veces (una en cada lado)
+# y dejar la solista en el centro. Aquí se preparan dos "escuchas" de la pista: una en la que se
+# cancela lo que suena a la derecha y otra en la que se cancela lo de la izquierda. Se transcribe
+# cada una y se comparan: las notas que solo salen en una son de la guitarra de ese lado; las que
+# salen en las dos están en el centro o las tocan las dos guitarras a la vez.
+# Si el usuario pide más guitarras de las que salen así, la que más toca se parte por registro.
 
-PAN_SIDE = 0.3  # a partir de aquí un sonido se considera "de un lado"
-PAN_MIN_SHARE = 0.15  # energía mínima que tiene que tener un lado para contar como guitarra
-PAN_LABELS = {"left": "izquierda", "center": "centro", "right": "derecha"}
+SIDE_MIN_PAN = 0.25  # a partir de aquí un sonido se considera "de un lado" (-1 izquierda, +1 derecha)
+SIDE_MIN_MASS = 0.08  # parte mínima de la energía que tiene que haber en ese lado
+OWN_MIN_SHARE = 0.3  # parte de las notas de un lado que no puede estar en el otro para ser otra guitarra
+PART_MIN_NOTES = 8
+PART_NAMES = {
+    "left": "Guitarra (izquierda)",
+    "right": "Guitarra (derecha)",
+    "center": "Guitarra (centro)",
+}
 
 
-def split_by_pan(path: Path, out_dir: Path, sr: int = 22050) -> dict[str, Path]:
+def side_gains(spec_l, spec_r) -> tuple[float | None, float | None]:
     """
-    Reparte una pista estéreo en izquierda, centro y derecha según en qué canal suena más fuerte
-    cada frecuencia en cada instante. Devuelve solo las partes con suficiente energía; si todo
-    está en el centro (o la pista es mono) devuelve un diccionario vacío.
+    Busca dónde están panoramizadas las fuentes de cada lado. Devuelve (g_izq, g_der): cuánto se
+    oye en el canal contrario lo que suena a la izquierda y a la derecha, de 0 (todo a un lado) a
+    casi 1 (casi en el centro). Si a un lado no hay nada, devuelve None para ese lado.
+    """
+    import numpy as np
+
+    mag_l, mag_r = np.abs(spec_l), np.abs(spec_r)
+    energy = mag_l**2 + mag_r**2
+    loud = energy > np.percentile(energy, 80)
+    pan = ((mag_r - mag_l) / (mag_r + mag_l + 1e-9))[loud]
+    hist, edges = np.histogram(pan, bins=40, range=(-1, 1), weights=energy[loud])
+    hist = np.convolve(hist, [0.25, 0.5, 0.25], mode="same") / (hist.sum() + 1e-12)
+    centers = (edges[:-1] + edges[1:]) / 2
+
+    def gain(side: np.ndarray) -> float | None:
+        if hist[side].sum() < SIDE_MIN_MASS:
+            return None
+        top = int(np.argmax(np.where(side, hist, 0)))
+        near = slice(max(0, top - 1), top + 2)
+        peak = abs(float(np.sum(centers[near] * hist[near]) / np.sum(hist[near])))
+        # Casi del todo a un lado: se da por panoramizado del todo (el histograma no afina más).
+        return 0.0 if peak >= 0.9 else float((1 - peak) / (1 + peak))
+
+    return gain(centers <= -SIDE_MIN_PAN), gain(centers >= SIDE_MIN_PAN)
+
+
+def stereo_views(stem: Path, out_dir: Path, sr: int = 22050) -> dict[str, Path] | None:
+    """
+    Escribe versiones mono de una pista estéreo: "left" (sin lo que suena a la derecha) y "right"
+    (sin lo que suena a la izquierda). Lo que está en el centro queda en las dos. Si a un lado no
+    hay ninguna fuente, la escucha contraria se llama "center": es lo que queda al quitar la del
+    otro lado. Devuelve None si la pista es mono o no tiene nada a los lados.
     """
     import librosa
     import numpy as np
     import soundfile as sf
 
-    data, file_sr = sf.read(path, dtype="float32", always_2d=True)
+    data, file_sr = sf.read(stem, dtype="float32", always_2d=True)
     if data.shape[1] < 2:
-        return {}
+        return None
     left = librosa.resample(data[:, 0], orig_sr=file_sr, target_sr=sr)
     right = librosa.resample(data[:, 1], orig_sr=file_sr, target_sr=sr)
-    n_fft, hop = 2048, 512
-    L = librosa.stft(left, n_fft=n_fft, hop_length=hop)
-    R = librosa.stft(right, n_fft=n_fft, hop_length=hop)
-    mag_l, mag_r = np.abs(L), np.abs(R)
-    pan = (mag_r - mag_l) / (mag_r + mag_l + 1e-9)  # -1 izquierda, +1 derecha
-    energy = mag_l**2 + mag_r**2
-    total = float(energy.sum()) + 1e-12
+    level = float(np.sqrt(np.mean((left**2 + right**2) / 2)))
+    if level < 1e-5 or np.sqrt(np.mean((left - right) ** 2)) < 0.05 * level:
+        return None
 
-    # Máscaras suaves para no dejar agujeros en el espectro al pasar de un lado al centro.
-    fade = 0.2
-    w_left = np.clip((-pan - (PAN_SIDE - fade / 2)) / fade, 0, 1)
-    w_right = np.clip((pan - (PAN_SIDE - fade / 2)) / fade, 0, 1)
-    w_center = 1 - w_left - w_right
-    shares = {
-        "left": float((energy * w_left).sum()) / total,
-        "center": float((energy * w_center).sum()) / total,
-        "right": float((energy * w_right).sum()) / total,
+    gain_left, gain_right = side_gains(
+        librosa.stft(left, n_fft=2048, hop_length=512), librosa.stft(right, n_fft=2048, hop_length=512)
+    )
+    if gain_left is None and gain_right is None:
+        return None
+    # Lo que suena a la derecha llega al canal izquierdo multiplicado por gain_right: restándolo
+    # del izquierdo desaparece. Y al revés.
+    views = {
+        "left" if gain_left is not None else "center": left - (gain_right or 0.0) * right,
+        "right" if gain_right is not None else "center": right - (gain_left or 0.0) * left,
     }
-    if shares["left"] < PAN_MIN_SHARE and shares["right"] < PAN_MIN_SHARE:
-        return {}
-    parts = {
-        "left": L * w_left,
-        "center": (L + R) / 2 * w_center,
-        "right": R * w_right,
-    }
-    out = {}
-    for side, spectrum in parts.items():
-        if shares[side] < PAN_MIN_SHARE:
+
+    # Donde una escucha se queda casi en silencio (solo suena la guitarra cancelada) se apaga del
+    # todo: el transcriptor no distingue volúmenes y escribiría el resto que queda.
+    frame, hop = 2048, 512
+    loudness = lambda x: librosa.feature.rms(y=x, frame_length=frame, hop_length=hop)[0]  # noqa: E731
+    reference = np.sqrt((loudness(left) ** 2 + loudness(right) ** 2) / 2) + 1e-9
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = {}
+    for side, audio in views.items():
+        audible = (loudness(audio) / reference > 0.15).astype(np.float32)
+        audible = np.convolve(audible, np.ones(5) / 5, mode="same")
+        gate = np.interp(np.arange(len(audio)), np.arange(len(audible)) * hop, audible)
+        audio = audio * gate
+        audio = audio * (level / (float(np.sqrt(np.mean(audio**2))) + 1e-9))
+        paths[side] = out_dir / f"guitar_{side}.wav"
+        sf.write(paths[side], np.clip(audio, -1, 1), sr, subtype="PCM_16")
+    return paths
+
+
+def merge_takes(takes: dict[str, list[dict]], tolerance: float = 0.06) -> list[dict]:
+    """
+    Junta varias transcripciones del mismo audio en una sola lista sin repetidos. Cada nota
+    recuerda en qué transcripciones ha salido ("seen"): una nota cuenta como presente en otra
+    transcripción si allí empieza a la vez o ya está sonando.
+    """
+    merged: list[dict] = []
+    recent: dict[int, list[dict]] = {}
+    tagged = [(note, source) for source, notes in takes.items() for note in notes]
+    for note, source in sorted(tagged, key=lambda item: item[0]["start"]):
+        same = next(
+            (m for m in recent.get(note["pitch"], ()) if abs(m["start"] - note["start"]) <= tolerance),
+            None,
+        )
+        if same:
+            same["seen"].add(source)
+            same["end"] = max(same["end"], note["end"])
+            same["velocity"] = max(same["velocity"], note["velocity"])
             continue
-        audio = librosa.istft(spectrum, hop_length=hop, length=len(left))
-        target = out_dir / f"guitar_{side}.wav"
-        sf.write(target, np.clip(audio, -1, 1), sr, subtype="PCM_16")
-        out[side] = target
-    return out
+        entry = {**note, "seen": {source}}
+        merged.append(entry)
+        recent[note["pitch"]] = [*recent.get(note["pitch"], [])[-3:], entry]
+
+    sounding: dict[tuple[str, int], list[tuple[float, float]]] = {}
+    for source, notes in takes.items():
+        for note in notes:
+            sounding.setdefault((source, note["pitch"]), []).append((note["start"], note["end"]))
+    for entry in merged:
+        for source in takes:
+            if source not in entry["seen"] and any(
+                start - tolerance <= entry["start"] <= end
+                for start, end in sounding.get((source, entry["pitch"]), ())
+            ):
+                entry["seen"].add(source)
+    return merged
+
+
+def group_by_side(takes: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """
+    Decide qué guitarras hay comparando las dos escuchas ("left"/"right", o "center" si a ese lado
+    no hay nada). Una escucha cuenta como guitarra aparte si una buena parte de lo que suena en
+    ella no está en la otra. Devuelve las notas de cada guitarra.
+    """
+    merged = merge_takes(takes)
+    own = {side: [n for n in merged if n["seen"] == {side}] for side in takes}
+    first, second = sorted(takes, key=lambda side: -len(own[side]))
+
+    def separate(side: str) -> bool:
+        return len(own[side]) >= max(PART_MIN_NOTES, OWN_MIN_SHARE * len(takes[side]))
+
+    if separate(first) and separate(second):
+        # Una guitarra en cada escucha: cada una es lo que se oye al cancelar la otra.
+        return dict(takes)
+    if separate(first) and len(takes[second]) >= PART_MIN_NOTES:
+        # Una guitarra a un lado y el resto en el centro: en la otra escucha ya no está la del
+        # lado, así que esa escucha entera es la guitarra del centro.
+        return {first: own[first], "center": takes[second]}
+    return {"center": [{k: v for k, v in n.items() if k != "seen"} for n in merged]}
 
 
 def note_overlap(a: list[dict], b: list[dict], tolerance: float = 0.08) -> float:
@@ -455,41 +741,42 @@ def guitar_parts(
     `wanted` es el número de guitarras que pide el usuario (None = automático).
     Devuelve (id, nombre, notas sin limpiar) por guitarra.
     """
-    if wanted == 1:
-        return [("guitar", "Guitarra", raw_notes(stem))]
+    views = None if wanted == 1 else stereo_views(stem, work / "stems")
+    if views is None:
+        grouped = {"center": raw_notes(stem)}
+    else:
+        grouped = group_by_side({side: raw_notes(path) for side, path in views.items()})
 
-    parts: list[tuple[str, str, list[dict]]] = []
-    for side, path in split_by_pan(stem, work / "stems").items():
-        notes = raw_notes(path)
-        if len(notes) >= 8:
-            parts.append((f"guitar_{side}", f"Guitarra ({PAN_LABELS[side]})", notes))
+    order = ["left", "center", "right"]
+    parts = [(f"guitar_{p}", PART_NAMES[p], grouped[p]) for p in order if p in grouped]
 
-    # La misma parte grabada dos veces (una a cada lado) se queda en una sola guitarra.
-    merged: list[tuple[str, str, list[dict]]] = []
-    for part in sorted(parts, key=lambda p: -len(p[2])):
-        if any(note_overlap(part[2], kept[2]) >= 0.5 for kept in merged):
-            continue
-        merged.append(part)
-    if wanted:
-        merged = merged[:wanted]
-    if not merged:
-        merged = [("guitar", "Guitarra", raw_notes(stem))]
+    # Sobran guitarras: la que menos toca se junta con la que más se le parece.
+    while wanted and len(parts) > wanted:
+        smallest = min(parts, key=lambda p: len(p[2]))
+        parts.remove(smallest)
+        target = max(range(len(parts)), key=lambda i: note_overlap(smallest[2], parts[i][2]))
+        ident, name, notes = parts[target]
+        parts[target] = (ident, name, sorted(notes + smallest[2], key=lambda n: n["start"]))
 
-    if wanted and len(merged) < wanted:
-        # Faltan guitarras: la que más notas tiene se parte en rítmica y solista.
-        biggest = max(range(len(merged)), key=lambda i: len(merged[i][2]))
-        ident, name, notes = merged[biggest]
+    # Faltan guitarras: la que más notas tiene se parte en rítmica y solista.
+    while wanted and len(parts) < wanted:
+        biggest = max(range(len(parts)), key=lambda i: len(parts[i][2]))
+        ident, name, notes = parts[biggest]
         rhythm, lead = split_by_register(notes)
-        if len(rhythm) >= 8 and len(lead) >= 8:
-            suffix = name[len("Guitarra"):]
-            merged[biggest : biggest + 1] = [
-                (f"{ident}_rhythm", f"Guitarra rítmica{suffix}", rhythm),
-                (f"{ident}_lead", f"Guitarra solista{suffix}", lead),
-            ]
+        if len(rhythm) < PART_MIN_NOTES or len(lead) < PART_MIN_NOTES or "rítmica" in name or "solista" in name:
+            break
+        suffix = name[len("Guitarra"):]
+        parts[biggest : biggest + 1] = [
+            (f"{ident}_rhythm", f"Guitarra rítmica{suffix}", rhythm),
+            (f"{ident}_lead", f"Guitarra solista{suffix}", lead),
+        ]
 
-    if len(merged) == 1:
-        merged = [(merged[0][0], "Guitarra", merged[0][2])]
-    return merged
+    if len(parts) == 1:
+        parts = [("guitar", "Guitarra", parts[0][2])]
+    elif len({name.partition(" (")[2] for _, name, _ in parts}) == 1:
+        # Todas en la misma posición: decirla no aporta nada.
+        parts = [(ident, name.partition(" (")[0], notes) for ident, name, notes in parts]
+    return parts
 
 
 def transcribe_notes(
@@ -520,12 +807,18 @@ def transcribe_notes(
 
     tracks = []
     wanted = [s for s in NOTE_RANGES if s in stems]
+    levels = {stem: rms(stems[stem]) for stem in wanted}
+    loudest = max(levels.values(), default=0.0)
     for i, stem in enumerate(wanted):
         kind, program, fmin, fmax, mono = NOTE_RANGES[stem]
         progress("notes", i / len(wanted), f"Transcribiendo {TRACK_NAMES[stem].lower()}…")
-        if rms(stems[stem]) < 0.004:
-            continue  # pista prácticamente en silencio
-        if kind == "guitar":
+        # Pista prácticamente en silencio, o con solo los restos de otros instrumentos que deja
+        # el separador (pasa sobre todo con el piano en canciones sin piano).
+        if levels[stem] < max(0.004, QUIET_STEM * loudest):
+            continue
+        if kind == "bass":
+            parts = [(stem, TRACK_NAMES[stem], transcribe_monophonic(stems[stem], fmin, fmax))]
+        elif kind == "guitar":
             parts = guitar_parts(
                 stems[stem],
                 lambda path: raw_notes(path, kind, fmin, fmax),
@@ -686,9 +979,9 @@ def command_transcribe(args: argparse.Namespace) -> None:
     source = resolve_source(args.source, work)
     audio = load_audio(source["path"])
     stems = separate(audio, work)
-    rhythm = analyze_rhythm(audio, stems)
-    tracks = transcribe_notes(stems, rhythm["tempo"], args.guitars, work)
     drums = transcribe_drums(stems["drums"]) if "drums" in stems else []
+    rhythm = analyze_rhythm(audio, stems, drums)
+    tracks = transcribe_notes(stems, rhythm["tempo"], args.guitars, work)
     chords = detect_chords(stems, audio, rhythm["beats"])
     lyrics = {"language": None, "words": []}
     if args.lyrics and "vocals" in stems and rms(stems["vocals"]) > 0.01:
@@ -739,10 +1032,8 @@ def main() -> None:
         emit("error", message=str(e))
         sys.exit(2)
     except Exception as e:  # noqa: BLE001
-        message = str(e)
-        if "Sign in to confirm" in message or "bot" in message.lower():
-            message = "YouTube ha bloqueado la descarga. Prueba más tarde o usa un archivo de audio."
-        emit("error", message=message or e.__class__.__name__, detail=traceback.format_exc()[-2000:])
+        message = friendly_error(e) or str(e) or e.__class__.__name__
+        emit("error", message=message, detail=traceback.format_exc()[-2000:])
         sys.exit(1)
 
 

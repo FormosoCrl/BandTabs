@@ -211,9 +211,10 @@ export function TranscribeDialog({ onClose, onImport }: Props) {
             <p className="note">
               Se separan los instrumentos y se escriben guitarra, bajo, piano, voz y batería, con los
               acordes y la letra. El resultado es un borrador: acierta bastante con el bajo y la
-              batería, y menos con guitarras distorsionadas o solos rápidos. Las guitarras se
-              reparten por el lado del estéreo en que suenan; si pides más de las que salen así, la
-              que más toca se parte en rítmica y solista por registro, que es solo una aproximación.
+              batería, y menos con guitarras distorsionadas o solos rápidos. Si hay una guitarra a
+              cada lado del estéreo sale una tab para cada una; si suenan en el mismo sitio salen
+              juntas, y al pedir dos se reparten en rítmica y solista por registro, que es solo una
+              aproximación.
             </p>
             {!ready && status && (
               <p className="note">

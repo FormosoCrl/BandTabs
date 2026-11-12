@@ -1,7 +1,8 @@
 import { Midi } from '@tonejs/midi';
 import { pitchName, quote, tuningToTex } from './alphatex';
 import { buildBars, type GridEvent } from './grid';
-import { assignFrets, STANDARD_BASS, STANDARD_GUITAR } from './frets';
+import { assignFrets, STANDARD_GUITAR } from './frets';
+import { suggestTuning } from '../tunings';
 
 type TrackKind = 'guitar' | 'bass' | 'drums' | 'other';
 
@@ -47,7 +48,12 @@ export function midiToAlphaTex(data: Uint8Array, fallbackTitle: string): string 
     const name = track.name.trim() || track.instrument.name || `Pista ${index + 1}`;
     out.push(`\\track ${quote(name)} \\instrument ${percussion ? 'percussion' : program}`);
 
-    const tuning = kind === 'bass' ? STANDARD_BASS : STANDARD_GUITAR;
+    // Si la pista baja de la cuerda más grave (Drop D, afinaciones bajas), se elige una afinación
+    // en la que quepa; con la estándar esas notas se perderían.
+    const tuning =
+      kind === 'guitar' || kind === 'bass'
+        ? suggestTuning(track.notes.map((n) => n.midi), kind)
+        : STANDARD_GUITAR;
     const drumKeys = [...new Set(track.notes.map((n) => n.midi))];
     if (kind === 'guitar' || kind === 'bass') {
       out.push(`\\staff {tabs} \\tuning ${tuningToTex(tuning)}`);

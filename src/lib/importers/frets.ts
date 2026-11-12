@@ -24,8 +24,18 @@ function candidates(pitch: number, tuning: number[]): FretPosition[] {
  */
 export function assignFrets(chords: number[][], tuning: number[]): FretPosition[][] {
   let hand = 0;
+  // Un mismo acorde se escribe siempre igual: verlo con dos digitaciones distintas en la misma
+  // canción despista más que un salto de posición.
+  const known = new Map<string, FretPosition[]>();
+  const settle = (positions: FretPosition[]) => {
+    const fretted = positions.filter((c) => c.fret > 0);
+    if (fretted.length) hand = fretted.reduce((n, c) => n + c.fret, 0) / fretted.length;
+    return positions;
+  };
   return chords.map((pitches) => {
     const notes = [...new Set(pitches)].sort((a, b) => b - a).slice(0, tuning.length);
+    const key = notes.join();
+    if (notes.length > 1 && known.has(key)) return settle(known.get(key)!);
     const options = notes.map((p) => candidates(p, tuning)).filter((c) => c.length > 0);
     let best: FretPosition[] = [];
     let bestCost = Infinity;
@@ -42,8 +52,10 @@ export function assignFrets(chords: number[][], tuning: number[]): FretPosition[
         const cost =
           (span > 4 ? 100 : span * 2) +
           Math.abs(center - hand) +
-          skipped * 1.5 +
-          chosen.reduce((n, c) => n + c.fret * 0.1, 0);
+          skipped * 3 +
+          // Entre dos sitios parecidos, el más cercano a la cejuela; y por encima del traste 12
+          // solo si no hay otra forma, que ahí las tabs reales casi nunca se quedan.
+          chosen.reduce((n, c) => n + c.fret * 0.3 + Math.max(0, c.fret - 12) * 0.5, 0);
         if (cost < bestCost) {
           bestCost = cost;
           best = [...chosen];
@@ -60,8 +72,7 @@ export function assignFrets(chords: number[][], tuning: number[]): FretPosition[
       }
     };
     search(0, new Set(), []);
-    const fretted = best.filter((c) => c.fret > 0);
-    if (fretted.length) hand = fretted.reduce((n, c) => n + c.fret, 0) / fretted.length;
-    return best;
+    if (notes.length > 1) known.set(key, best);
+    return settle(best);
   });
 }
