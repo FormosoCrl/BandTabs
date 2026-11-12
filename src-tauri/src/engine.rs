@@ -173,13 +173,16 @@ pub async fn engine_transcribe(
   app: AppHandle,
   source: String,
   lyrics: bool,
+  guitars: Option<u8>,
 ) -> Result<String, String> {
   let dir = engine_dir(&app)?;
   let script = engine_source(&app)?.join("bandtabs_engine.py");
   let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-  let work = plain(app.path().app_local_data_dir().map_err(|e| e.to_string())?)
-    .join("transcriptions")
-    .join(stamp.to_string());
+  let root = plain(app.path().app_local_data_dir().map_err(|e| e.to_string())?).join("transcriptions");
+  // Cada análisis deja el audio descargado y las pistas separadas (unos 300 MB por canción) y
+  // la app solo necesita el resultado: se borra lo de análisis anteriores y, al acabar, lo de este.
+  let _ = std::fs::remove_dir_all(&root);
+  let work = root.join(stamp.to_string());
 
   let python = python_exe(&dir);
   let scripts = python.parent().map(|p| p.join("Scripts")).unwrap_or_default();
@@ -203,11 +206,17 @@ pub async fn engine_transcribe(
   if !lyrics {
     command.arg("--no-lyrics");
   }
+  if let Some(n) = guitars.filter(|n| (1..=3).contains(n)) {
+    command.arg("--guitars").arg(n.to_string());
+  }
 
-  let done = run_blocking(app, command).await?;
-  let value: serde_json::Value = serde_json::from_str(&done).map_err(|e| e.to_string())?;
-  let result_path = value.get("result").and_then(|r| r.as_str()).ok_or("Resultado vacío")?;
-  std::fs::read_to_string(result_path).map_err(|e| e.to_string())
+  let result = run_blocking(app, command).await.and_then(|done| {
+    let value: serde_json::Value = serde_json::from_str(&done).map_err(|e| e.to_string())?;
+    let result_path = value.get("result").and_then(|r| r.as_str()).ok_or("Resultado vacío")?;
+    std::fs::read_to_string(result_path).map_err(|e| e.to_string())
+  });
+  let _ = std::fs::remove_dir_all(&root);
+  result
 }
 
 #[tauri::command]

@@ -1,4 +1,5 @@
 import { quote, tuningToTex } from './alphatex';
+import { buildBars, type GridEvent } from './grid';
 
 const PITCH_CLASSES: Record<string, number> = {
   c: 0, 'c#': 1, db: 1, d: 2, 'd#': 3, eb: 3, e: 4, f: 5, 'f#': 6, gb: 6,
@@ -71,13 +72,21 @@ interface Event {
   notes: { string: number; fret: string }[];
 }
 
-function parseBlock(block: Block): { bars: Event[][]; width: number } {
+interface Bar {
+  /** Primera columna del compás y la de la barra que lo cierra. */
+  start: number;
+  end: number;
+  events: Event[];
+}
+
+function parseBlock(block: Block): Bar[] {
   const width = Math.max(...block.lines.map((l) => l.length));
   const lines = block.lines.map((l) => l.padEnd(width, '-'));
-  const bars: Event[][] = [[]];
+  const bars: Bar[] = [{ start: 0, end: width, events: [] }];
   for (let col = 0; col < width; col++) {
     if (lines.every((l) => l[col] === '|')) {
-      if (bars[bars.length - 1].length) bars.push([]);
+      bars[bars.length - 1].end = col;
+      bars.push({ start: col + 1, end: width, events: [] });
       continue;
     }
     const notes: Event['notes'] = [];
@@ -91,17 +100,55 @@ function parseBlock(block: Block): { bars: Event[][]; width: number } {
         notes.push({ string: s + 1, fret: 'x' });
       }
     });
-    if (notes.length) bars[bars.length - 1].push({ column: col, notes });
+    if (notes.length) bars[bars.length - 1].events.push({ column: col, notes });
   }
-  return { bars: bars.filter((b) => b.length), width };
+  // Los compases vacíos anchos son silencios de verdad; los estrechos, barras dobles o de repetición.
+  return bars.filter((b) => b.events.length || b.end - b.start >= 8).flatMap(splitLongBar);
 }
 
-function durationFor(gap: number, unit: number): number {
-  const ratio = gap / unit;
-  if (ratio < 1.5) return 8;
-  if (ratio < 3) return 4;
-  if (ratio < 6) return 2;
-  return 1;
+const BAR_STEPS = 16;
+
+/** Una línea sin barras de compás (o con más notas de las que caben) se reparte en varios compases. */
+function splitLongBar(bar: Bar): Bar[] {
+  const parts = Math.ceil(bar.events.length / BAR_STEPS);
+  if (parts <= 1) return [bar];
+  const width = (bar.end - bar.start) / parts;
+  return Array.from({ length: parts }, (_, i) => {
+    const start = Math.round(bar.start + i * width);
+    const end = Math.round(bar.start + (i + 1) * width);
+    return { start, end, events: bar.events.filter((e) => e.column >= start && e.column < end) };
+  });
+}
+
+/**
+ * Coloca las notas de un compás en la rejilla de semicorcheas según su posición horizontal: una
+ * nota a mitad del compás cae en el tercer tiempo. Así cada compás dura exactamente un 4/4.
+ */
+function barEvents(bar: Bar, index: number): GridEvent[] {
+  // Casi todas las tabs dejan uno o dos guiones de margen antes de la primera nota: si la primera
+  // está cerca del principio, es el primer tiempo.
+  const first = bar.events[0]?.column ?? bar.start;
+  const margin = Math.max(2, (bar.end - bar.start) / 8);
+  const origin = first - bar.start <= margin ? first : bar.start + 1;
+  const span = Math.max(1, bar.end - origin);
+  // Con pocas notas se cuadra a corcheas, que da figuras más limpias; con muchas, a semicorcheas.
+  const unit = bar.events.length <= BAR_STEPS / 2 ? 2 : 1;
+  const out: GridEvent[] = [];
+  let previous = -unit;
+  for (const ev of bar.events) {
+    const raw = Math.round(((ev.column - origin) / span) * (BAR_STEPS / unit)) * unit;
+    // Dos notas muy juntas no pueden caer en el mismo sitio: la segunda pasa al siguiente.
+    const step = Math.max(raw, previous + unit);
+    if (step >= BAR_STEPS) break;
+    previous = step;
+    const notes = ev.notes.map((n) => `${n.fret}.${n.string}`);
+    out.push({
+      step: index * BAR_STEPS + step,
+      end: (index + 1) * BAR_STEPS,
+      body: notes.length === 1 ? notes[0] : `(${notes.join(' ')})`,
+    });
+  }
+  return out;
 }
 
 export class NoTabFoundError extends Error {
@@ -113,7 +160,8 @@ export class NoTabFoundError extends Error {
 
 /**
  * Convierte una tablatura en texto (el formato típico de las webs de tabs) a alphaTex.
- * El ritmo no está escrito en estas tabs, así que se estima por la separación entre notas.
+ * El ritmo no está escrito en estas tabs, así que se estima por la posición de cada nota dentro de
+ * su compás, suponiendo compases de 4/4.
  */
 export function asciiTabToAlphaTex(text: string, title: string): string {
   const blocks = findBlocks(text);
@@ -122,24 +170,9 @@ export function asciiTabToAlphaTex(text: string, title: string): string {
   const tuning = tuningFromLabels(blocks[0].labels);
   const sameShape = blocks.filter((b) => b.lines.length === stringCount);
 
-  const bars: string[] = [];
-  for (const block of sameShape) {
-    const parsed = parseBlock(block);
-    const allGaps: number[] = [];
-    for (const bar of parsed.bars) {
-      for (let i = 1; i < bar.length; i++) allGaps.push(bar[i].column - bar[i - 1].column);
-    }
-    const unit = allGaps.length ? Math.max(1, Math.min(...allGaps)) : 2;
-    for (const bar of parsed.bars) {
-      const beats = bar.map((ev, i) => {
-        const gap = (bar[i + 1]?.column ?? ev.column + unit) - ev.column;
-        const notes = ev.notes.map((n) => `${n.fret}.${n.string}`);
-        const body = notes.length === 1 ? notes[0] : `(${notes.join(' ')})`;
-        return `${body}.${durationFor(gap, unit)}`;
-      });
-      bars.push(beats.join(' '));
-    }
-  }
+  const parsed = sameShape.flatMap(parseBlock);
+  const events = parsed.flatMap(barEvents);
+  const bars = buildBars(events, parsed.length, BAR_STEPS);
 
   const instrument = stringCount <= 5 ? 33 : 25;
   return [

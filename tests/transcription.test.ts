@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { importer } from '@coderline/alphatab';
 import {
+  gridBias,
   makeTimeGrid,
   transcriptionToAlphaTex,
   type EngineResult,
@@ -71,6 +72,25 @@ describe('rejilla de tiempo', () => {
     expect(toStep(0.25)).toBe(-2);
     expect(toStep(9.0)).toBe(68); // más allá del último tiempo se extrapola
   });
+
+  it('añade compases por delante si la música empieza antes del primer tiempo fuerte', () => {
+    // El primer tiempo fuerte detectado es el tercero (1,0 s), pero hay notas desde 0,0 s.
+    const toStep = makeTimeGrid(beats, 2, 120, 0);
+    expect(toStep(0)).toBe(8); // medio compás de anacrusa: el compás 1 empieza medio compás antes
+    expect(toStep(1.0)).toBe(16);
+    // Una nota un pelo antes del primer tiempo fuerte no añade un compás entero.
+    expect(makeTimeGrid(beats, 1, 120, 0.45)(0.5)).toBe(0);
+  });
+
+  it('corrige el desfase entre las notas y los tiempos', () => {
+    const toStep = makeTimeGrid(beats, 0, 120);
+    // Las notas llegan unos 50 ms tarde (casi media semicorchea a 120 BPM), unas más y otras menos.
+    const late = Array.from({ length: 16 }, (_, i) => i * 0.125 + 0.05 + (i % 2 ? 0.02 : -0.02));
+    expect(toStep(late[1])).toBe(2);
+    toStep.bias = gridBias(late, toStep);
+    expect(toStep.bias).toBeCloseTo(0.05 / 0.125, 1);
+    expect(late.map((t) => toStep(t))).toEqual(Array.from({ length: 16 }, (_, i) => i));
+  });
 });
 
 describe('transcriptionToAlphaTex', () => {
@@ -132,6 +152,15 @@ describe('afinación en la transcripción', () => {
     const first = staff.bars[0].voices[0].beats.find((b) => b.notes.length)!.notes[0];
     expect(first.string).toBe(1);
     expect(first.fret).toBe(0);
+  });
+
+  it('usa la misma afinación en todas las guitarras', () => {
+    const high = { ...lowD.tracks[0], stem: 'guitar_right', name: 'Guitarra (derecha)' };
+    high.notes = high.notes.map((n) => ({ ...n, pitch: n.pitch + 24 }));
+    const score = importer.ScoreLoader.loadAlphaTex(
+      transcriptionToAlphaTex({ ...lowD, tracks: [high, lowD.tracks[0]] }),
+    );
+    expect(score.tracks.slice(0, 2).map((t) => t.staves[0].tuning[5])).toEqual([38, 38]);
   });
 
   it('respeta la afinación elegida', () => {

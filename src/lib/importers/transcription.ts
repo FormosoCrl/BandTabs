@@ -35,25 +35,70 @@ const DRUM_MIDI: Record<EngineResult['drums'][number]['piece'], number> = {
 /**
  * Convierte segundos en semicorcheas contando desde el primer tiempo fuerte detectado. Entre dos
  * tiempos interpola; antes y después extrapola con la duración media de un tiempo.
+ *
+ * Si la música empieza antes de ese primer tiempo fuerte (`startTime`), la cuenta empieza los
+ * compases enteros que hagan falta antes, para que esas notas no se pierdan.
  */
-export function makeTimeGrid(beats: number[], downbeat: number, tempo: number) {
-  const usable = beats.slice(Math.max(0, downbeat));
+export function makeTimeGrid(
+  beats: number[],
+  downbeat: number,
+  tempo: number,
+  startTime?: number,
+  beatsPerBar = 4,
+) {
   const fallback = 60 / (tempo || 120);
-  const avg =
-    usable.length > 1 ? (usable[usable.length - 1] - usable[0]) / (usable.length - 1) : fallback;
-  const first = usable[0] ?? 0;
-  return (time: number): number => {
-    if (usable.length < 2 || time < first) return Math.round(((time - first) / avg) * 4);
+  const avg = beats.length > 1 ? (beats[beats.length - 1] - beats[0]) / (beats.length - 1) : fallback;
+  const first = beats[0] ?? 0;
+  /** Posición en tiempos (con decimales) respecto al primer tiempo detectado. */
+  const position = (time: number): number => {
+    const last = beats.length - 1;
+    if (beats.length < 2 || time < first) return (time - first) / avg;
+    if (time >= beats[last]) return last + (time - beats[last]) / avg;
     let lo = 0;
-    let hi = usable.length - 1;
-    if (time >= usable[hi]) return Math.round((hi + (time - usable[hi]) / avg) * 4);
+    let hi = last;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
-      if (usable[mid] <= time) lo = mid;
+      if (beats[mid] <= time) lo = mid;
       else hi = mid;
     }
-    return Math.round((lo + (time - usable[lo]) / (usable[lo + 1] - usable[lo])) * 4);
+    return lo + (time - beats[lo]) / (beats[lo + 1] - beats[lo]);
   };
+  const origin = Math.max(0, Math.min(downbeat, beats.length - 1));
+  // Un cuarto de tiempo de margen: una nota un pelo antes del primer tiempo fuerte es ese tiempo.
+  const early = startTime === undefined ? 0 : origin - (position(startTime) + 0.25);
+  const extraBars = early > 0 ? Math.ceil(early / beatsPerBar) : 0;
+  const exact = (time: number) => (position(time) - origin + extraBars * beatsPerBar) * 4;
+  // El "+ 0" convierte -0 en 0.
+  const grid = ((time: number) => Math.round(exact(time) - grid.bias) + 0) as TimeGrid;
+  grid.exact = exact;
+  grid.bias = 0;
+  return grid;
+}
+
+/** Función que da la semicorchea de un instante; `exact` la da sin redondear. */
+export interface TimeGrid {
+  (time: number): number;
+  exact(time: number): number;
+  /** Desfase que se resta antes de redondear (ver `gridBias`). */
+  bias: number;
+}
+
+/**
+ * Desfase medio (en semicorcheas, entre -0,5 y 0,5) entre los ataques y la rejilla. Los tiempos y
+ * las notas se detectan con métodos distintos y suelen ir unas milésimas adelantados o atrasados
+ * entre sí; sin corregirlo, en canciones rápidas muchas notas caen en la semicorchea de al lado.
+ */
+export function gridBias(times: number[], grid: TimeGrid): number {
+  if (times.length < 8) return 0;
+  // Media circular: -0,49 y +0,49 están al lado, no en extremos opuestos.
+  let x = 0;
+  let y = 0;
+  for (const time of times) {
+    const angle = grid.exact(time) * 2 * Math.PI;
+    x += Math.cos(angle);
+    y += Math.sin(angle);
+  }
+  return Math.atan2(y, x) / (2 * Math.PI);
 }
 
 interface Onset {
@@ -112,8 +157,15 @@ export function transcriptionToAlphaTex(
   result: EngineResult,
   options: TranscriptionOptions = {},
 ): string {
-  const toStep = makeTimeGrid(result.beats, result.downbeat, result.tempo);
-  const barSteps = (result.beatsPerBar || 4) * 4;
+  const beatsPerBar = result.beatsPerBar || 4;
+  const starts = [
+    ...result.tracks.flatMap((t) => t.notes.map((n) => n.start)),
+    ...result.drums.map((d) => d.time),
+  ];
+  const startTime = starts.length ? Math.max(0, starts.reduce((a, b) => Math.min(a, b))) : undefined;
+  const toStep = makeTimeGrid(result.beats, result.downbeat, result.tempo, startTime, beatsPerBar);
+  toStep.bias = gridBias(starts, toStep);
+  const barSteps = beatsPerBar * 4;
   const lastStep = Math.max(1, toStep(result.duration));
   const barCount = Math.max(1, Math.ceil(lastStep / barSteps));
 
@@ -132,8 +184,12 @@ export function transcriptionToAlphaTex(
     let bodies: string[];
     if (track.kind === 'guitar' || track.kind === 'bass') {
       const chosen = track.kind === 'bass' ? options.bass : options.guitar;
+      // Todas las guitarras de una canción comparten afinación: se deduce de las notas de todas.
+      const pitches = result.tracks
+        .filter((t) => t.kind === track.kind)
+        .flatMap((t) => t.notes.map((n) => n.pitch));
       const tuning =
-        chosen ?? suggestTuning(track.notes.map((n) => n.pitch), track.kind) ??
+        chosen ?? suggestTuning(pitches, track.kind) ??
         (track.kind === 'bass' ? STANDARD_BASS : STANDARD_GUITAR);
       header.push(`\\staff {tabs} \\tuning ${tuningToTex(tuning)}`);
       bodies = assignFrets(
@@ -174,7 +230,9 @@ export function transcriptionToAlphaTex(
       ],
       events: [...hits.entries()].map(([step, set]) => {
         const parts = [...set].map((k) => `p${k}`);
-        return { step, end: step + 1, body: parts.length === 1 ? parts[0] : `(${parts.join(' ')})` };
+        // Un golpe de batería no dura nada, pero escrito como semicorchea llena el compás de
+        // silencios: se alarga hasta el siguiente golpe o, como mucho, un tiempo.
+        return { step, end: step + 4, body: parts.length === 1 ? parts[0] : `(${parts.join(' ')})` };
       }),
       kind: 'drums',
     });

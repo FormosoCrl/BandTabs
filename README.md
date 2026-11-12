@@ -50,13 +50,18 @@ bajar el audio. Una canción de cuatro minutos tarda entre 5 y 10 minutos en un 
 Es un borrador. Suele acertar con el bajo, la batería y los acordes, y falla más con guitarras
 muy distorsionadas o solos rápidos.
 
+Si la canción tiene una guitarra a cada lado del estéreo, sale una tab para cada una. Si las
+guitarras suenan en el mismo sitio (o es la misma parte grabada dos veces, una a cada lado) salen
+en una sola tab; en "Guitarras" puedes pedir dos o tres y entonces se reparten en rítmica y solista
+por registro, que es solo una aproximación.
+
 De Spotify solo se leen el título y el artista de la página pública; el audio se busca en
 YouTube. Usa solo canciones que tengas derecho a usar: descargar de YouTube puede ir contra sus
 condiciones, y eso es responsabilidad de quien lo hace.
 
 Por dentro usa [Demucs](https://github.com/facebookresearch/demucs) para separar instrumentos,
 [Basic Pitch](https://github.com/spotify/basic-pitch) para las notas,
-[librosa](https://librosa.org) para tempo, compases, acordes y batería,
+[librosa](https://librosa.org) para el bajo, tempo, compases, acordes y batería,
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) para la letra y
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) para bajar el audio.
 
